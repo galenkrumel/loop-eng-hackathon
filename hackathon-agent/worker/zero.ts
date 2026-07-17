@@ -75,6 +75,8 @@ export type ZeroFetchOptions = {
   headers?: Record<string, string>;
   /** Label used in error messages / logs (the capability name). */
   label: string;
+  /** Abort the request (including the pay-and-retry) after this long. */
+  timeoutMs?: number;
 };
 
 /**
@@ -93,6 +95,7 @@ export async function zeroFetch<T = unknown>(env: Env, opts: ZeroFetchOptions): 
       method,
       headers,
       body: opts.body !== undefined ? JSON.stringify(opts.body) : undefined,
+      ...(opts.timeoutMs ? { signal: AbortSignal.timeout(opts.timeoutMs) } : {}),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
@@ -121,8 +124,8 @@ export async function zeroFetch<T = unknown>(env: Env, opts: ZeroFetchOptions): 
 
 /**
  * The Zero capabilities Scrape_profile depends on. URLs, methods, and the
- * verified request shapes come from live testing on Zero (2026-07-17). Both
- * settle as x402 on Base (v2 LinkedPanda, v1 AnyAPI).
+ * verified request shapes come from live testing on Zero (2026-07-17).
+ * Settles as x402 v2 on Base.
  */
 export const CAPABILITIES = {
   /** LinkedIn profile lookup by username — the 800x800 avatarUrl PLUS rich
@@ -133,11 +136,14 @@ export const CAPABILITIES = {
     url: "https://api.linkedpanda.com/agent/v1/profiles/",
     price: 0.05,
   },
-  /** Instagram profile search by name — avatar photo fallback. x402 v1.
-   * ~$0.002. */
-  instagramSearch: {
-    label: "AnyAPI Instagram Search",
-    url: "https://api.getanyapi.com/v1/run/instagram.search_profiles",
-    price: 0.002,
+  /** Brand kit by domain — logo URL + brand color hexes. x402 v2 on Base,
+   * ~$0.02. (Brand.dev's own Zero capability settles via MPP on Tempo, which
+   * only the Zero CLI's payment stack performs — this is the worker-payable
+   * equivalent for Get_company_assets.) POST { domain }. */
+  brandAssets: {
+    label: "StatePulse Brand Assets Lookup",
+    url: "https://statepulse-api.hahavoid0.workers.dev/brand/assets",
+    price: 0.02,
+    timeoutMs: 90_000,
   },
 } as const;

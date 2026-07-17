@@ -105,10 +105,12 @@ function toolLabel(toolName: string, input: unknown, done: boolean): string {
       return `${done ? "Generated" : "Generating"} merch design${recruit}`;
     }
     case "Get_company_assets": {
-      const company = typeof record.company_url === "string" && record.company_url.trim()
-        ? ` from ${record.company_url.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
+      const rawCompany = typeof record.company === "string" ? record.company
+        : typeof record.company_url === "string" ? record.company_url : "";
+      const company = rawCompany.trim()
+        ? ` for ${rawCompany.trim().replace(/^https?:\/\//, "").replace(/\/.*$/, "")}`
         : "";
-      return `${done ? "Fetched" : "Fetching"} brand assets${company}`;
+      return `${done ? "Fetched" : "Fetching"} brand kit${company}`;
     }
     default:
       return toolName;
@@ -151,6 +153,36 @@ function outputImages(output: unknown): string[] {
     }
   }
   return urls.filter((src) => /^https?:\/\//.test(src)).slice(0, 8);
+}
+
+type ProductLink = { url: string; title: string | null };
+
+/** Printify product pages a tool result wants linked in chat — a single
+ * printify_product_url on direct product-creation results, or the products[]
+ * list a finished subagent reports. */
+function outputProductLinks(output: unknown): ProductLink[] {
+  if (!output || typeof output !== "object") return [];
+  const record = output as Record<string, unknown>;
+  const links: ProductLink[] = [];
+  const seen = new Set<string>();
+  const push = (entry: Record<string, unknown>) => {
+    const url = entry.printify_product_url;
+    if (typeof url !== "string" || !/^https:\/\//.test(url) || seen.has(url)) return;
+    seen.add(url);
+    links.push({
+      url,
+      title: typeof entry.title === "string" && entry.title.trim() ? entry.title.trim() : null,
+    });
+  };
+  push(record);
+  if (Array.isArray(record.products)) {
+    for (const entry of record.products) {
+      if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+        push(entry as Record<string, unknown>);
+      }
+    }
+  }
+  return links.slice(0, 6);
 }
 
 type OrderInfo = {
@@ -230,6 +262,7 @@ export function ToolActivity({ part }: { part: AnyPart }) {
   const summary = summarizeToolOutput(part.output);
   const images = outputImages(part.output);
   const orderInfo = outputOrderInfo(part.output);
+  const productLinks = outputProductLinks(part.output);
 
   return (
     <div>
@@ -318,6 +351,40 @@ export function ToolActivity({ part }: { part: AnyPart }) {
                 background: LB.surfaceAlt,
               }}
             />
+          </a>
+        ))}
+      </div>
+    )}
+    {productLinks.length > 0 && (
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 8, margin: "8px 0" }}>
+        {productLinks.map((link) => (
+          <a
+            key={link.url}
+            href={link.url}
+            target="_blank"
+            rel="noreferrer noopener"
+            style={{
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "7px 14px",
+              borderRadius: 999,
+              background: LB.blue,
+              color: "#fff",
+              fontSize: 12.5,
+              fontWeight: 600,
+              textDecoration: "none",
+              maxWidth: 320,
+            }}
+          >
+            <span style={{
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+            }}>
+              Order now on Printify{link.title ? ` — ${link.title}` : ""}
+            </span>
+            <span aria-hidden style={{ fontSize: 11, flexShrink: 0 }}>↗</span>
           </a>
         ))}
       </div>

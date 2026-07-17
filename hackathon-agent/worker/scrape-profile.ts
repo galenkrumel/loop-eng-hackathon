@@ -6,13 +6,17 @@ import { CAPABILITIES, zeroFetch, ZeroError } from "./zero";
  * Scrape_profile: (recruit_name, recruit_linkedin_username)
  *   -> profile image of the recruit + JSON enrichment data.
  *
- * Pipeline (paid Zero x402 capabilities, verified live 2026-07-17):
- *   1. LinkedPanda LinkedIn Lookup (~$0.05, x402 v2) — one call yields the
- *      800x800 profile PHOTO and rich enrichment: headline, title, company,
- *      location, `about` (often carries the personal website + GitHub), and
- *      skills.
- *   2. Instagram fallback (~$0.002, x402 v1) — only if LinkedIn has no photo:
- *      search Instagram by name and take the best-matching profile's avatar.
+ * Pipeline (paid Zero x402 capability, verified live 2026-07-17):
+ *   LinkedPanda LinkedIn Lookup (~$0.05, x402 v2) — one call yields the
+ *   800x800 profile PHOTO and rich enrichment: headline, title, company,
+ *   location, `about` (often carries the personal website + GitHub), and
+ *   skills.
+ *
+ * If LinkedIn has no publicly visible photo (avatarUrl null — common when the
+ * member restricts photo visibility to logged-in users), profile_image_url is
+ * null and a warning says so. There is deliberately NO name-based fallback to
+ * other social networks: matching by name alone routinely returns a different
+ * person's face, which is far worse on printed swag than no photo at all.
  *
  * The photo BYTES are stored in R2 (like Get_company_assets) and served from
  * /files/<key>, so the returned image URL is stable and renders everywhere.
@@ -25,7 +29,7 @@ import { CAPABILITIES, zeroFetch, ZeroError } from "./zero";
 
 export const scrapeProfileInputSchema = z.object({
   recruit_name: z.string().trim().min(1).max(120)
-    .describe('Recruit full name, e.g. "Constantin Ertel" (used for identity validation and the Instagram fallback)'),
+    .describe('Recruit full name, e.g. "Constantin Ertel" (used for identity validation)'),
   recruit_linkedin_username: z.string().trim().min(1).max(120)
     .describe('LinkedIn vanity slug from linkedin.com/in/<slug>, e.g. "constantin-ertel" (a full URL is also accepted)'),
   refresh: z.boolean().optional()
@@ -55,8 +59,8 @@ function normalizeName(value: string): string {
     .trim();
 }
 
-/** Do both name tokens (first + last) appear in `candidate`? Keeps the
- * Instagram fallback from grabbing an unrelated same-surname account. */
+/** Do both name tokens (first + last) appear in `candidate`? Used to flag a
+ * LinkedIn username that resolves to a different person than expected. */
 function nameMatches(expected: string, candidate: string | null | undefined): boolean {
   if (!candidate) return false;
   const want = normalizeName(expected).split(" ").filter(Boolean);
@@ -207,42 +211,20 @@ export async function executeScrapeProfile(
     warnings.push(`LinkedIn lookup failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
-  // --- Step 2: store the photo (LinkedIn preferred, Instagram fallback) ---
-  let imageSource: "linkedin" | "instagram" | null = null;
+  // --- Step 2: store the photo (LinkedIn only — no name-based fallbacks,
+  // they routinely return a same-named stranger's face) ---
+  let imageSource: "linkedin" | null = null;
   let storedImage: { url: string; content_type: string; bytes: number } | null = null;
-  let instagramHandle: string | null = null;
 
   if (linkedinAvatarUrl) {
     storedImage = await storeImage(env, linkedinAvatarUrl, `recruits/${username}/linkedin`);
     if (storedImage) imageSource = "linkedin";
     else warnings.push("LinkedIn avatar URL did not download (may have expired).");
-  }
-
-  if (!storedImage) {
-    // Instagram fallback: search by name, pick the best-matching public avatar.
-    try {
-      const ig = await zeroFetch<{ output?: { data?: { profiles?: Array<Record<string, unknown>> } } }>(env, {
-        label: CAPABILITIES.instagramSearch.label,
-        url: CAPABILITIES.instagramSearch.url,
-        method: "POST",
-        body: { query: input.recruit_name },
-      });
-      providersUsed.push("anyapi-instagram-search");
-      costEstimate += CAPABILITIES.instagramSearch.price;
-      const profiles = ig.output?.data?.profiles ?? [];
-      const chosen = profiles.find((p) => nameMatches(input.recruit_name, (p.displayName as string) ?? (p.handle as string))) ?? null;
-      if (chosen) {
-        instagramHandle = (chosen.handle as string) ?? null;
-        const avatar = chosen.avatarUrl as string | undefined;
-        if (avatar) {
-          storedImage = await storeImage(env, avatar, `recruits/${username}/instagram`);
-          if (storedImage) imageSource = "instagram";
-        }
-      }
-      if (!storedImage) warnings.push("No usable Instagram profile photo matched the recruit's name.");
-    } catch (error) {
-      warnings.push(`Instagram fallback failed: ${error instanceof Error ? error.message : String(error)}`);
-    }
+  } else if (lp) {
+    warnings.push(
+      "LinkedIn returned no profile photo — the recruit likely restricts photo visibility to logged-in members. "
+        + "profile_image_url is null; ask the user for a photo if one is needed.",
+    );
   }
 
   const enrichment = normalizeEnrichment(lp);
@@ -266,7 +248,6 @@ export async function executeScrapeProfile(
     profile_image_url: storedImage?.url ?? null,
     image_source: imageSource,
     image_content_type: storedImage?.content_type ?? null,
-    instagram_handle: instagramHandle,
     enrichment,
     data_url: `${base}/files/${rawKey}`,
     providers_used: providersUsed,

@@ -64,14 +64,18 @@ export const PLACE_ORDER_DESCRIPTION =
 export const CALL_SUBAGENT_DESCRIPTION =
   "Delegate a task to a Qwen subagent that has its own tool loop with access to Order_custom_product, Place_order, "
   + "AnalyzeFile, Get_company_assets, Scrape_profile, and Generate_merch. Use one call PER RECRUIT for batch swag workflows — each subagent handles one recruit "
-  + "end-to-end and returns the mockup image URLs it produced (they render in chat for viewing). Input: "
+  + "end-to-end and returns the mockup image URLs plus Printify product links it produced (both render in chat). Input: "
   + "{ task, context? } — give it a complete, self-contained instruction (it cannot see this conversation): recruit "
   + "name, the design image URL, product details, and the address if one was provided.";
 
 export const GET_COMPANY_ASSETS_DESCRIPTION =
-  "Fetch a company's brand image assets (logo, og-image, icons) from its website. Input: { company_url, refresh? }. "
-  + "Assets are stored in R2 and returned as stable https URLs that render in chat and work as design images for "
-  + "Order_custom_product. Results are cached per domain for 24h (refresh=true re-scrapes).";
+  "Look up a company's REAL brand kit from its name: official logo, brand color hexes, slogan, and domain "
+  + "(Brand.dev/Context.dev, a Zero-paid x402 lookup, website-CSS color scraping, and a web-search fallback — in "
+  + "that order). Input: { company, refresh? } — company is the name (\"Anthropic\"; a domain/URL also works). "
+  + "Returns { logo_url (stable https URL, use as Generate_merch's brand_image), brand_colors/chromatic_colors "
+  + "(real brand hexes for the design brief), slogan, domain, assets }. The logo bytes are stored in R2 so the "
+  + "URLs render in chat and work as design images. Cached per company for 24h (refresh=true re-runs, which may "
+  + "re-pay the Zero capability).";
 
 export const SCRAPE_PROFILE_DESCRIPTION =
   "Look up a recruit from their name + LinkedIn username and get back their profile photo plus enrichment data. "
@@ -79,16 +83,20 @@ export const SCRAPE_PROFILE_DESCRIPTION =
   + "vanity slug (a full URL works too). Returns { profile_image_url (a stable https image URL that renders in chat), "
   + "image_source, enrichment: { headline, current_title/company, location, skills, links (linkedin/website/github), about }, "
   + "data_url (full raw JSON), cost_estimate_usd }. One LinkedIn lookup (via LinkedPanda) yields both the 800x800 photo and "
-  + "the enrichment; if LinkedIn has no photo it falls back to the recruit's Instagram avatar. Paid per call via Zero (x402); "
+  + "the enrichment; if the recruit's LinkedIn photo is not publicly visible, profile_image_url is null (a warning explains why) — "
+  + "ask the user for a photo rather than guessing one from other sites. Paid per call via Zero (x402); "
   + "results are cached per recruit for 24h (refresh=true re-scrapes). Use this to personalize swag before Generate_merch.";
 
 export const GENERATE_MERCH_DESCRIPTION =
-  "Generate a personalized flat merch design (mug-wrap PNG, 2700×1120) for a recruit and optionally create the "
-  + "Printify product from it in one call. Input: { recruit_name, company_name?, profile_image?, brand_image?, "
-  + "prompt?, create_product? } — images are https:// URLs, data:image URIs, or \"attachment:last\" / "
-  + "\"attachment:<n>\" (chat only). The design is art-directed from the brand image (palette + tagline), rendered "
-  + "with the recruit's photo and name, QA-reviewed by the vision model with one automatic redo, and returned as a "
-  + "stable https URL plus Printify mockups when create_product is on (default). Pass brand_image from "
+  "Generate personalized merch designs for a recruit — T-shirt, hat, or mug — and optionally create the Printify "
+  + "product in one call. Input: { recruit_name, product_type? (tee | hat | mug, default tee), blank_color?, "
+  + "company_name?, profile_image?, brand_image?, prompt?, create_product? } — images are https:// URLs, data:image "
+  + "URIs, or \"attachment:last\" / \"attachment:<n>\" (chat only). A tee produces FOUR design generations (front "
+  + "chest crest, back name print, sleeve crest on both sleeves, neck label) placed on the matching Printify print "
+  + "areas; a hat gets a front-panel design; a mug gets a full wrap. The garment color is picked from the live "
+  + "Printify catalog to fit the brand (or pass blank_color), the palette + tagline are art-directed from the brand "
+  + "image, and the design is QA-reviewed by the vision model with one automatic redo. Returns stable https URLs per "
+  + "layer (design_images) plus Printify mockups when create_product is on (default). Pass brand_image from "
   + "Get_company_assets for on-brand results.";
 
 export const EDIT_RECRUITS_DESCRIPTION =
@@ -135,9 +143,9 @@ Tools:
 - Order_custom_product — create a Printify product from a flat design image; returns mockup image URLs and variants.
 - Place_order — mail a created product to an address (only when the task supplies a full address).
 - AnalyzeFile — inspect an image or PDF by URL/data URI.
-- Get_company_assets — fetch a company's brand images (logo/og/icons) from its website; returns stable https URLs usable as design images.
+- Get_company_assets — look up a company's real brand kit by NAME (logo URL, brand color hexes, slogan); pass logo_url as Generate_merch's brand_image and put the chromatic_colors hexes in the design brief.
 - Scrape_profile — look up a recruit by name + LinkedIn username; returns their profile photo URL and enrichment JSON (title, company, skills, socials) to personalize the swag.
-- Generate_merch — generate a personalized flat merch design (recruit photo + name, brand palette + tagline, QA-reviewed) and optionally create the Printify product in the same call. Prefer it over Order_custom_product when you have a recruit name plus profile/brand image URLs.
+- Generate_merch — generate personalized merch designs (product_type: tee | hat | mug; a tee gets four layers: front crest, back name print, sleeve crest, neck label) with brand palette + tagline, QA-reviewed, and optionally create the multi-position Printify product in the same call. Prefer it over Order_custom_product when you have a recruit name plus profile/brand image URLs.
 - View_recruits — read your recruit's row from the recruits database (names: [recruit name]); shows which fields are already filled (missing[] lists what's left).
 - Search_recruits — resolve a fuzzy/misspelled recruit reference to the exact stored name ({ queries: [fragment] }); use it if View_recruits reports your recruit as not found.
 - Edit_recruits — save your results to the recruits database. After scraping/generating, upsert the recruit's row with linkedin_url, profile_image_url, enrichment, design_image_url, printify_product_id/printify_product_url, mockup_images, and an updated status (enriched | merch_created | failed with notes).
@@ -208,6 +216,20 @@ export async function executeCallSubagent(
         ? output.mockup_images.filter((src): src is string => typeof src === "string")
         : [];
     }));
+  // Likewise surface every Printify product the subagent created, so the chat
+  // UI can render an "Order on Printify" link per item.
+  const products = result.steps.flatMap((step) =>
+    step.toolResults.flatMap((toolResult) => {
+      const output = toolResult.output as Record<string, unknown> | undefined;
+      if (typeof output?.product_id !== "string" || !output.product_id) return [];
+      return [{
+        product_id: output.product_id,
+        ...(typeof output.title === "string" && output.title ? { title: output.title } : {}),
+        printify_product_url: typeof output.printify_product_url === "string" && output.printify_product_url
+          ? output.printify_product_url
+          : `https://printify.com/app/product-details/${output.product_id}`,
+      }];
+    }));
 
   const answer = result.text.trim();
   if (!answer && toolCalls.length === 0) {
@@ -218,6 +240,7 @@ export async function executeCallSubagent(
     tool_calls: toolCalls,
     steps: result.steps.length,
     ...(mockups.length > 0 ? { mockup_images: mockups.slice(0, 6) } : {}),
+    ...(products.length > 0 ? { products: products.slice(0, 6) } : {}),
   };
 }
 

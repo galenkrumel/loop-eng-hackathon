@@ -1,24 +1,37 @@
 import { DurableObject } from "cloudflare:workers";
 import { z } from "zod";
 import { getPublicBaseUrl, type Env } from "./types";
+import {
+  chromaticHexes,
+  downloadPreferredLogo,
+  enrichBrandColors,
+  guessDomain,
+  lookupBrand,
+  type BrandProfile,
+} from "./brand-lookup";
 
 /**
- * Get_company_assets: company URL → brand image assets.
+ * Get_company_assets: company NAME → real brand kit (logo, colors, slogan).
  *
- * Design: scrape the company homepage with HTMLRewriter (og:image /
- * twitter:image, icon links, logo-heuristic <img> tags), add the Clearbit
- * logo API and Google's favicon service as high-reliability candidates,
- * download the best few, and persist the BYTES in R2 (ASSETS_BUCKET) with
- * the INDEX in a per-domain CompanyAssets Durable Object. Assets are served
- * back via GET /assets/<key>, so every tool (and the chat UI) gets stable
- * https URLs. Re-calls within 24h return the cached index.
+ * The jersey-studio pipeline (brand_lookup.py), worker-side:
+ *   name → Context.dev/Brand.dev (API key) → Zero-paid brand lookup →
+ *   normalize (title/domain/slogan/≤8 colors/ranked logos) → website CSS
+ *   color scrape only when no chromatic color survived → OpenRouter
+ *   web-search fallback → download the preferred raster logo.
+ *
+ * The logo BYTES are persisted in R2 (ASSETS_BUCKET) and served back via
+ * GET /files/<key>, so every tool gets a stable https URL — Generate_merch
+ * turns it into the base64 input_reference for gpt-image-2. When the brand
+ * services yield no logo at all, the previous homepage scrape (og:image /
+ * icons / Clearbit / Google favicon) still guarantees usable image assets.
+ * Re-calls within 24h return the cached kit (per-company Durable Object).
  */
 
 export const getCompanyAssetsInputSchema = z.object({
-  company_url: z.string().trim().min(3).max(300)
-    .describe('Company website URL or bare domain, e.g. "anthropic.com" or "https://stripe.com"'),
+  company: z.string().trim().min(2).max(300)
+    .describe('Company name (preferred, e.g. "Anthropic") — a website domain/URL also works'),
   refresh: z.boolean().optional()
-    .describe("Force a re-scrape even if a fresh cached index exists (default false)"),
+    .describe("Force a fresh lookup even if a cached brand kit exists (default false)"),
 });
 export type GetCompanyAssetsInput = z.infer<typeof getCompanyAssetsInputSchema>;
 
@@ -31,28 +44,35 @@ export type CompanyAsset = {
   source_url: string;
 };
 
-type AssetIndex = {
-  domain: string;
+type BrandIndex = {
+  company: string;
   fetched_at: string;
+  brand: {
+    title: string;
+    domain: string;
+    slogan: string;
+    colors: string[];
+    source: string;
+  } | null;
   assets: CompanyAsset[];
 };
 
 const INDEX_TTL_MS = 24 * 60 * 60 * 1000;
-const MAX_ASSETS = 8;
+const MAX_FALLBACK_ASSETS = 4;
 const MAX_ASSET_BYTES = 4 * 1024 * 1024;
 const MIN_ASSET_BYTES = 400;
 const MAX_HTML_BYTES = 3 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 15_000;
 
-/** Per-domain asset index. Bytes live in R2; this DO is the reference the
- * rest of the system reads (and the 24h scrape cache). */
+/** Per-company brand kit cache. Bytes live in R2; this DO is the reference
+ * the rest of the system reads (and the 24h lookup cache). */
 export class CompanyAssets extends DurableObject {
-  async getIndex(): Promise<AssetIndex | null> {
-    return (await this.ctx.storage.get<AssetIndex>("index")) ?? null;
+  async getIndex(): Promise<BrandIndex | null> {
+    return (await this.ctx.storage.get<BrandIndex>("brand_index")) ?? null;
   }
 
-  async putIndex(index: AssetIndex): Promise<void> {
-    await this.ctx.storage.put("index", index);
+  async putIndex(index: BrandIndex): Promise<void> {
+    await this.ctx.storage.put("brand_index", index);
   }
 }
 
@@ -87,12 +107,15 @@ async function fetchWithTimeout(url: string, accept: string): Promise<Response |
   }
 }
 
+/* ------------------ fallback: homepage image scrape ------------------- */
+/* Used only when the brand pipeline produced no downloadable logo. */
+
 type Candidate = { url: string; kind: CompanyAsset["kind"]; priority: number };
 
 /** Parse the homepage with HTMLRewriter, collecting asset candidates. */
-async function collectHomepageCandidates(domain: string): Promise<{ candidates: Candidate[]; pageUrl: string | null }> {
+async function collectHomepageCandidates(domain: string): Promise<Candidate[]> {
   const response = await fetchWithTimeout(`https://${domain}/`, "text/html,application/xhtml+xml");
-  if (!response || !response.ok) return { candidates: [], pageUrl: null };
+  if (!response || !response.ok) return [];
   const pageUrl = response.url || `https://${domain}/`;
 
   const candidates: Candidate[] = [];
@@ -150,7 +173,7 @@ async function collectHomepageCandidates(domain: string): Promise<{ candidates: 
     await reader.cancel().catch(() => undefined);
   }
 
-  return { candidates, pageUrl };
+  return candidates;
 }
 
 function extensionFor(contentType: string): string {
@@ -162,39 +185,10 @@ function extensionFor(contentType: string): string {
   return "jpg";
 }
 
-export async function executeGetCompanyAssets(
-  env: Env,
-  input: GetCompanyAssetsInput,
-): Promise<Record<string, unknown>> {
-  const domain = normalizeDomain(input.company_url);
-  if (!domain) {
-    return { error: `"${input.company_url}" is not a usable company URL or domain.`, code: "INVALID_COMPANY_URL" };
-  }
-  if (!env.ASSETS_BUCKET) {
-    return { error: "ASSETS_BUCKET (R2) is not configured.", code: "MISSING_BUCKET" };
-  }
-
-  const stub = env.CompanyAssets.get(env.CompanyAssets.idFromName(domain)) as unknown as CompanyAssets;
-
-  // 24h cache: the DO index is the source of truth for what's in R2.
-  if (input.refresh !== true) {
-    const existing = await stub.getIndex();
-    if (existing && Date.now() - Date.parse(existing.fetched_at) < INDEX_TTL_MS && existing.assets.length > 0) {
-      return {
-        company: domain,
-        cached: true,
-        fetched_at: existing.fetched_at,
-        assets: existing.assets.map(({ url, kind, content_type }) => ({ url, kind, content_type })),
-        note: "Cached from an earlier scrape (re-run with refresh=true to re-scrape).",
-      };
-    }
-  }
-
-  // Candidate set: homepage scrape + always-on fallbacks. Clearbit's logo
-  // API is the single most reliable "give me the company logo" source, so
-  // it ranks first; Google's favicon service is the floor that guarantees
-  // at least one asset for any real domain.
-  const { candidates } = await collectHomepageCandidates(domain);
+/** Download + store the best scraped homepage candidates (Clearbit and
+ * Google-favicon fallbacks included, so a real domain always yields ≥1). */
+async function scrapeFallbackAssets(env: Env, domain: string, keyPrefix: string): Promise<CompanyAsset[]> {
+  const candidates = await collectHomepageCandidates(domain);
   candidates.push({ url: `https://logo.clearbit.com/${domain}`, kind: "logo", priority: 10 });
   candidates.push({ url: `https://www.google.com/s2/favicons?domain=${domain}&sz=256`, kind: "icon", priority: 90 });
 
@@ -209,26 +203,15 @@ export async function executeGetCompanyAssets(
 
   const base = getPublicBaseUrl(env);
   const assets: CompanyAsset[] = [];
-  const failures: string[] = [];
-
   for (const candidate of ranked) {
-    if (assets.length >= MAX_ASSETS) break;
+    if (assets.length >= MAX_FALLBACK_ASSETS) break;
     const response = await fetchWithTimeout(candidate.url, "image/*,*/*;q=0.5");
-    if (!response || !response.ok) {
-      failures.push(candidate.url);
-      continue;
-    }
+    if (!response || !response.ok) continue;
     const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase() ?? "";
-    if (!contentType.startsWith("image/")) {
-      failures.push(candidate.url);
-      continue;
-    }
+    if (!contentType.startsWith("image/")) continue;
     const buffer = await response.arrayBuffer();
-    if (buffer.byteLength < MIN_ASSET_BYTES || buffer.byteLength > MAX_ASSET_BYTES) {
-      failures.push(candidate.url);
-      continue;
-    }
-    const key = `companies/${domain}/${assets.length}-${candidate.kind}.${extensionFor(contentType)}`;
+    if (buffer.byteLength < MIN_ASSET_BYTES || buffer.byteLength > MAX_ASSET_BYTES) continue;
+    const key = `${keyPrefix}/${assets.length}-${candidate.kind}.${extensionFor(contentType)}`;
     await env.ASSETS_BUCKET.put(key, buffer, { httpMetadata: { contentType } });
     assets.push({
       key,
@@ -239,22 +222,131 @@ export async function executeGetCompanyAssets(
       source_url: candidate.url,
     });
   }
+  return assets;
+}
 
+/* -------------------------------- executor -------------------------------- */
+
+function companySlug(name: string): string {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "company";
+}
+
+function indexResult(index: BrandIndex, cached: boolean): Record<string, unknown> {
+  const brand = index.brand;
+  const chromatic = brand ? chromaticHexes(brand.colors) : [];
+  // gpt-image-2 rejects SVG input references, so logo_url must be raster;
+  // SVG assets stay in the list for chat display only.
+  const raster = index.assets.filter((asset) => !asset.content_type.includes("svg"));
+  const logo = raster.find((asset) => asset.kind === "logo") ?? raster[0] ?? null;
+  return {
+    company: index.company,
+    cached,
+    fetched_at: index.fetched_at,
+    ...(brand ? {
+      title: brand.title || index.company,
+      domain: brand.domain || undefined,
+      slogan: brand.slogan || undefined,
+      brand_colors: brand.colors,
+      chromatic_colors: chromatic,
+      brand_source: brand.source,
+    } : {}),
+    ...(logo ? { logo_url: logo.url } : {}),
+    assets: index.assets.map(({ url, kind, content_type }) => ({ url, kind, content_type })),
+    note: (logo
+      ? "Pass logo_url as Generate_merch's brand_image (it becomes the gpt-image-2 logo reference). "
+      : "No downloadable logo was found — designs will infer the brand from the name. ")
+      + (chromatic.length > 0
+        ? `Real brand accent hexes: ${chromatic.join(", ")} — include them in the design brief as the COLOR LOCK.`
+        : "No chromatic brand colors were found; let the art director infer a palette.")
+      + (cached ? " (Cached — refresh=true re-runs the lookup.)" : ""),
+  };
+}
+
+export async function executeGetCompanyAssets(
+  env: Env,
+  input: GetCompanyAssetsInput,
+): Promise<Record<string, unknown>> {
+  // A domain/URL input still works: it becomes the scrape/Zero domain hint,
+  // and the first label doubles as the lookup name ("anthropic.com" → "anthropic").
+  const raw = input.company.trim();
+  const looksLikeUrl = /^https?:\/\//i.test(raw) || (/\./.test(raw) && !/\s/.test(raw));
+  const domainHint = looksLikeUrl ? normalizeDomain(raw) : null;
+  const name = domainHint ? domainHint.split(".")[0] : raw;
+  if (name.length < 2) {
+    return { error: `"${input.company}" is not a usable company name or domain.`, code: "INVALID_COMPANY" };
+  }
+  if (!env.ASSETS_BUCKET) {
+    return { error: "ASSETS_BUCKET (R2) is not configured.", code: "MISSING_BUCKET" };
+  }
+
+  const cacheKey = domainHint ?? companySlug(name);
+  const stub = env.CompanyAssets.get(env.CompanyAssets.idFromName(cacheKey)) as unknown as CompanyAssets;
+
+  // 24h cache: the DO index is the source of truth for what's in R2.
+  if (input.refresh !== true) {
+    const existing = await stub.getIndex();
+    if (existing && Date.now() - Date.parse(existing.fetched_at) < INDEX_TTL_MS
+      && (existing.brand !== null || existing.assets.length > 0)) {
+      return indexResult(existing, true);
+    }
+  }
+
+  // 1-3) Brand lookup (API key → Zero-paid) + normalization.
+  let brand: BrandProfile | null = await lookupBrand(env, name, domainHint);
+  if (brand && !brand.domain && domainHint) brand.domain = domainHint;
+
+  // 4-5) Color enrichment only when no chromatic color survived:
+  // website CSS scrape, then OpenRouter web search.
+  brand = await enrichBrandColors(env, name, brand, domainHint);
+
+  // 6) Download the preferred logo → R2 (stable URL for chat + gpt-image-2).
+  const keyPrefix = `companies/${cacheKey}`;
+  const assets: CompanyAsset[] = [];
+  if (brand) {
+    const logo = await downloadPreferredLogo(brand);
+    if (logo) {
+      const extension = extensionFor(logo.mediaType);
+      const key = `${keyPrefix}/logo.${extension}`;
+      await env.ASSETS_BUCKET.put(key, logo.bytes, { httpMetadata: { contentType: logo.mediaType } });
+      assets.push({
+        key,
+        url: `${getPublicBaseUrl(env)}/files/${key}`,
+        kind: "logo",
+        content_type: logo.mediaType,
+        bytes: logo.bytes.byteLength,
+        source_url: brand.logoUrls[0] ?? "",
+      });
+    }
+  }
+
+  // Fallback: no logo from the brand services → previous homepage scrape.
   if (assets.length === 0) {
+    const domain = brand?.domain?.trim().toLowerCase() || domainHint || guessDomain(name, brand);
+    if (domain) assets.push(...await scrapeFallbackAssets(env, domain, keyPrefix));
+  }
+
+  if (!brand && assets.length === 0) {
     return {
-      error: `Could not retrieve any image assets for ${domain} (tried ${ranked.length} candidates).`,
-      code: "NO_ASSETS_FOUND",
+      error: `No brand data or image assets found for "${name}". Designs can still infer the brand from the company name.`,
+      code: "NO_BRAND_FOUND",
     };
   }
 
-  const index: AssetIndex = { domain, fetched_at: new Date().toISOString(), assets };
+  const index: BrandIndex = {
+    company: brand?.title || name,
+    fetched_at: new Date().toISOString(),
+    brand: brand
+      ? {
+        title: brand.title,
+        domain: brand.domain,
+        slogan: brand.slogan,
+        colors: brand.colorHexes,
+        source: brand.source,
+      }
+      : null,
+    assets,
+  };
   await stub.putIndex(index);
 
-  return {
-    company: domain,
-    cached: false,
-    fetched_at: index.fetched_at,
-    assets: assets.map(({ url, kind, content_type }) => ({ url, kind, content_type })),
-    note: `Stored ${assets.length} asset${assets.length === 1 ? "" : "s"} in R2; URLs are stable and usable in other tools (e.g. as Order_custom_product design images).`,
-  };
+  return indexResult(index, false);
 }

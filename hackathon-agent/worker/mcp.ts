@@ -38,8 +38,8 @@ import {
 import type { Env } from "./types";
 
 const SERVER_INSTRUCTIONS =
-  "Hackathon recruiting-swag agent tools. Get_company_assets scrapes a company site's brand images into stable "
-  + "URLs. Order_custom_product creates a Printify product from a flat design image "
+  "Hackathon recruiting-swag agent tools. Get_company_assets looks up a company's real brand kit by name "
+  + "(logo, brand color hexes, slogan) into stable URLs. Order_custom_product creates a Printify product from a flat design image "
   + "(https URL or data:image/...;base64 URI — attachment: refs are chat-only) and returns mockup images (also as "
   + "inline image content). Place_order mails a created product to an address. Call_subagent delegates a "
   + "self-contained task to a Qwen subagent with its own tool loop. Generate_merch renders a personalized "

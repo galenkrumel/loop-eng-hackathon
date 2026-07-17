@@ -135,6 +135,280 @@ async function uploadDesignImage(env: Env, image: string): Promise<string> {
 
 type CatalogVariant = { id: number; title: string; placeholders: Array<{ position: string }> };
 
+/* ----------------------- multi-product merch catalog ---------------------- */
+
+/**
+ * Product catalog ported from the jersey-studio branch (Consti's
+ * jersey-app/printify_client.py): tee is the multi-position jersey flow
+ * (front/back/sleeves/neck), hat is a DTF front panel, mug is the
+ * sublimation wrap. Providers are Printify Choice (99) like the reference
+ * app, with a runtime fallback to whatever provider actually stocks the
+ * blueprint.
+ */
+export type MerchProductType = "tee" | "hat" | "mug";
+
+export type MerchProductConfig = {
+  label: string;
+  blueprintId: number;
+  printProviderId: number;
+  /** Print positions in preferred order; must match Printify placeholder names. */
+  positions: readonly string[];
+  hasColor: boolean;
+  /** Variant sizes to enable; null enables every size the provider offers. */
+  sizes: readonly string[] | null;
+  priceCents: number;
+  fallbackColors: readonly string[];
+};
+
+export const MERCH_PRODUCTS: Record<MerchProductType, MerchProductConfig> = {
+  tee: {
+    label: "T-shirt",
+    // Bella+Canvas 3001 Unisex Jersey Short Sleeve Tee
+    blueprintId: 12,
+    printProviderId: 99,
+    positions: ["front", "back", "left_sleeve", "right_sleeve", "neck"],
+    hasColor: true,
+    sizes: ["S", "M", "L", "XL", "2XL"],
+    priceCents: 2499,
+    fallbackColors: ["Black", "White", "Navy", "True Royal", "Red"],
+  },
+  hat: {
+    label: "Hat",
+    // OTTO Cap Low Profile Baseball Cap — DTF front
+    blueprintId: 1108,
+    printProviderId: 99,
+    positions: ["front"],
+    hasColor: true,
+    sizes: null,
+    priceCents: 2499,
+    fallbackColors: ["Black", "Dark Green", "Dark Navy", "Khaki", "Red", "Royal", "White"],
+  },
+  mug: {
+    label: "Mug",
+    // Ceramic Mug 11oz/15oz — dye-sublimation wrap
+    blueprintId: 478,
+    printProviderId: 99,
+    positions: ["front"],
+    hasColor: false,
+    sizes: ["11oz", "15oz"],
+    priceCents: 1999,
+    fallbackColors: [],
+  },
+};
+
+type MerchVariant = {
+  id: number;
+  title?: string;
+  options?: { color?: string; size?: string };
+  placeholders?: Array<{ position?: string; width?: number; height?: number }>;
+};
+
+export type MerchCatalog = {
+  providerId: number;
+  variants: MerchVariant[];
+  colors: string[];
+};
+
+async function fetchVariantsFor(env: Env, blueprintId: number, providerId: number): Promise<MerchVariant[]> {
+  const catalog = await printifyFetch(
+    env,
+    `/catalog/blueprints/${blueprintId}/print_providers/${providerId}/variants.json`,
+  ) as { variants?: MerchVariant[] };
+  return Array.isArray(catalog.variants) ? catalog.variants : [];
+}
+
+function variantColors(variants: MerchVariant[]): string[] {
+  const seen = new Set<string>();
+  for (const variant of variants) {
+    const color = variant.options?.color;
+    if (typeof color === "string" && color) seen.add(color);
+  }
+  return [...seen].sort();
+}
+
+/** Variants + blank colors for a product, falling back past a dead provider. */
+export async function fetchMerchCatalog(env: Env, productType: MerchProductType): Promise<MerchCatalog> {
+  const config = MERCH_PRODUCTS[productType];
+  let providerId = config.printProviderId;
+  let variants: MerchVariant[] = [];
+  try {
+    variants = await fetchVariantsFor(env, config.blueprintId, providerId);
+  } catch {
+    variants = [];
+  }
+  if (variants.length === 0) {
+    const providers = await printifyFetch(
+      env,
+      `/catalog/blueprints/${config.blueprintId}/print_providers.json`,
+    ) as Array<{ id: number }>;
+    for (const candidate of providers ?? []) {
+      if (!candidate?.id || candidate.id === config.printProviderId) continue;
+      try {
+        const alternative = await fetchVariantsFor(env, config.blueprintId, candidate.id);
+        if (alternative.length > 0) {
+          providerId = candidate.id;
+          variants = alternative;
+          break;
+        }
+      } catch {
+        continue;
+      }
+    }
+  }
+  if (variants.length === 0) {
+    throw new Error(`No Printify variants found for ${config.label} (blueprint ${config.blueprintId}).`);
+  }
+  return { providerId, variants, colors: variantColors(variants) };
+}
+
+/** Map a requested blank color onto an exact catalog color name. */
+export function resolveBlankColor(requested: string | null | undefined, allowed: string[]): string {
+  if (allowed.length === 0) throw new Error("No blank colors available for this blueprint.");
+  const query = requested?.trim().toLowerCase();
+  if (query) {
+    const exact = allowed.find((color) => color.toLowerCase() === query);
+    if (exact) return exact;
+    const soft = allowed.filter((color) =>
+      color.toLowerCase().includes(query) || query.includes(color.toLowerCase()));
+    if (soft.length > 0) return soft.reduce((best, color) => (color.length > best.length ? color : best));
+  }
+  for (const preferred of ["Black", "Navy", "White", "Dark Navy", "Royal"]) {
+    if (allowed.includes(preferred)) return preferred;
+  }
+  return allowed[0];
+}
+
+function selectMerchVariants(
+  variants: MerchVariant[],
+  config: MerchProductConfig,
+  color: string | null,
+): MerchVariant[] {
+  const sizeSet = config.sizes ? new Set(config.sizes) : null;
+  let selected = variants.filter((variant) => {
+    const options = variant.options ?? {};
+    if (color && options.color !== color) return false;
+    if (sizeSet && typeof options.size === "string" && !sizeSet.has(options.size)) return false;
+    return true;
+  });
+  // Color was forced but the size filter emptied the set — keep the color, any size.
+  if (selected.length === 0 && color) {
+    selected = variants.filter((variant) => variant.options?.color === color);
+  }
+  if (selected.length === 0) selected = variants;
+  return selected.slice(0, MAX_VARIANTS);
+}
+
+/** Positions every selected variant supports (intersection). */
+function supportedPositions(variants: MerchVariant[]): Set<string> {
+  const sets = variants
+    .map((variant) => new Set(
+      (variant.placeholders ?? [])
+        .map((placeholder) => placeholder.position)
+        .filter((position): position is string => typeof position === "string" && position.length > 0),
+    ))
+    .filter((set) => set.size > 0);
+  if (sets.length === 0) return new Set();
+  return sets.reduce((shared, set) => new Set([...shared].filter((position) => set.has(position))));
+}
+
+export type CreateMerchProductArgs = {
+  productType: MerchProductType;
+  title: string;
+  description?: string;
+  /** Print-position → image source (https URL / data URI / own asset URL).
+   * The same source on several positions is uploaded once. */
+  imagesByPosition: Record<string, string>;
+  blankColor?: string | null;
+};
+
+/**
+ * Multi-position product creation, ported from upload_and_create_draft /
+ * create_product in Consti's printify_client.py: pick variants by blank
+ * color + size, place each layer on its print position, dedupe uploads.
+ */
+export async function createMerchProduct(env: Env, args: CreateMerchProductArgs): Promise<Record<string, unknown>> {
+  const config = MERCH_PRODUCTS[args.productType];
+  const shopId = await getShopId(env);
+  const { providerId, variants: allVariants, colors } = await fetchMerchCatalog(env, args.productType);
+
+  let chosenColor: string | null = null;
+  if (config.hasColor) {
+    const allowed = colors.length > 0 ? colors : [...config.fallbackColors];
+    chosenColor = resolveBlankColor(args.blankColor, allowed);
+  }
+  const variants = selectMerchVariants(allVariants, config, chosenColor);
+  const supported = supportedPositions(variants);
+
+  const uploadIdBySource = new Map<string, string>();
+  const placeholders: Array<Record<string, unknown>> = [];
+  const usedPositions: string[] = [];
+  for (const position of config.positions) {
+    const source = args.imagesByPosition[position];
+    if (!source || (supported.size > 0 && !supported.has(position))) continue;
+    let imageId = uploadIdBySource.get(source);
+    if (!imageId) {
+      imageId = await uploadDesignImage(env, source);
+      uploadIdBySource.set(source, imageId);
+    }
+    placeholders.push({
+      position,
+      images: [{ id: imageId, x: 0.5, y: 0.5, scale: 1, angle: 0 }],
+    });
+    usedPositions.push(position);
+  }
+  if (placeholders.length === 0) {
+    throw new Error(
+      `None of the provided print positions are supported by this provider `
+      + `(provided: ${Object.keys(args.imagesByPosition).sort().join(", ")}; `
+      + `supported: ${[...supported].sort().join(", ") || "unknown"}).`,
+    );
+  }
+
+  const variantIds = variants.map((variant) => variant.id);
+  const product = await printifyFetch(env, `/shops/${shopId}/products.json`, {
+    method: "POST",
+    body: {
+      title: args.title.slice(0, 200),
+      description: (args.description ?? `${args.title} — created by the hackathon agent.`).slice(0, 2000),
+      blueprint_id: config.blueprintId,
+      print_provider_id: providerId,
+      variants: variantIds.map((id) => ({ id, price: config.priceCents, is_enabled: true })),
+      print_areas: [{ variant_ids: variantIds, placeholders }],
+    },
+  }) as {
+    id?: string;
+    title?: string;
+    images?: Array<{ src: string; is_default?: boolean }>;
+    variants?: Array<{ id: number; title: string; is_enabled?: boolean }>;
+  };
+  if (!product?.id) throw new Error("Printify product creation returned no id.");
+
+  const mockups = [...(product.images ?? [])]
+    .sort((left, right) => Number(right.is_default ?? false) - Number(left.is_default ?? false))
+    .map((entry) => entry.src)
+    .filter((src): src is string => typeof src === "string" && src.length > 0)
+    .slice(0, MAX_MOCKUPS);
+  const enabledVariants = (product.variants ?? [])
+    .filter((variant) => variant.is_enabled !== false)
+    .map((variant) => ({ id: variant.id, title: variant.title }));
+
+  return {
+    product_id: product.id,
+    title: product.title ?? args.title,
+    product_type: args.productType,
+    blueprint_id: config.blueprintId,
+    print_provider_id: providerId,
+    blank_color: chosenColor,
+    positions: usedPositions,
+    mockup_images: mockups,
+    variants: enabledVariants,
+    default_variant_id: enabledVariants[0]?.id ?? variantIds[0],
+    order_available: true,
+    printify_product_url: `https://printify.com/app/product-details/${product.id}`,
+    note: "Mockups above are Printify's generated reference images. To ship one, use the order form (chat) or the Place_order tool (MCP) with a mailing address.",
+  };
+}
+
 export async function executeOrderCustomProduct(
   env: Env,
   input: OrderCustomProductInput,
@@ -240,6 +514,7 @@ export async function executeOrderCustomProduct(
     // Signal for the chat UI to render the order form; over MCP, follow up
     // with the Place_order tool instead.
     order_available: true,
+    printify_product_url: `https://printify.com/app/product-details/${product.id}`,
     note: "Mockups above are Printify's generated reference images. To ship one, use the order form (chat) or the Place_order tool (MCP) with a mailing address.",
   };
 }
