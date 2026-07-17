@@ -76,7 +76,8 @@
     }
 
     input[type="text"],
-    input[type="file"] {
+    input[type="file"],
+    textarea {
       width: 100%;
       border: 1px solid var(--line);
       background: var(--field);
@@ -90,11 +91,18 @@
       font-weight: 400;
     }
 
+    textarea {
+      min-height: 5.5rem;
+      resize: vertical;
+      line-height: 1.45;
+    }
+
     input[type="file"] {
       padding: 0.7rem 0.85rem;
     }
 
-    input:focus {
+    input:focus,
+    textarea:focus {
       outline: 2px solid var(--accent);
       outline-offset: 1px;
     }
@@ -256,6 +264,84 @@
     }
 
     .printify a:hover { text-decoration: underline; }
+
+    .review {
+      display: none;
+      margin-top: 1.6rem;
+      padding: 1rem 1.15rem;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(26, 34, 45, 0.85);
+      gap: 0.4rem;
+    }
+
+    .review.show { display: grid; }
+
+    .review h2 {
+      font-family: "Bebas Neue", sans-serif;
+      font-size: 1.35rem;
+      letter-spacing: 0.05em;
+    }
+
+    .review p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+
+    .review .badge {
+      width: fit-content;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      padding: 0.3rem 0.55rem;
+      border-radius: 6px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(232, 93, 4, 0.35);
+      color: var(--paper);
+    }
+
+    .review .badge.ok {
+      background: rgba(61, 214, 140, 0.15);
+      border-color: rgba(61, 214, 140, 0.4);
+      color: var(--ok);
+    }
+
+    .product-type {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.65rem;
+    }
+
+    .product-type label.choice {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.45rem;
+      padding: 0.85rem 0.6rem;
+      border-radius: 10px;
+      border: 1px solid var(--line);
+      background: var(--field);
+      color: var(--paper);
+      font-size: 0.95rem;
+      font-weight: 600;
+      letter-spacing: normal;
+      text-transform: none;
+      cursor: pointer;
+      transition: border-color 0.15s ease, background 0.15s ease;
+    }
+
+    .product-type input {
+      accent-color: var(--accent);
+    }
+
+    .product-type label.choice:has(input:checked) {
+      border-color: rgba(232, 93, 4, 0.7);
+      background: var(--accent-soft);
+    }
+
+    .layer-card[hidden] { display: none !important; }
   </style>
 </head>
 <body>
@@ -263,12 +349,30 @@
     <header>
       <h1 class="brand">Jersey <span>Studio</span></h1>
       <p class="lede">
-        Enter a company, a candidate name, and a photo. Get print-ready jersey
-        layers for Printify, a style mockup, and a try-on of the person wearing it.
+        Enter a company, optional design brief, candidate name, and a photo. Choose a
+        t-shirt, hat, or mug — a vision critic checks brand fit (via web search) and
+        may redo the art before Printify, mockup, and try-on.
       </p>
     </header>
 
     <form id="form">
+      <label>
+        Product
+        <div class="product-type" role="radiogroup" aria-label="Product type">
+          <label class="choice">
+            <input type="radio" name="product_type" value="tee" checked />
+            T-shirt
+          </label>
+          <label class="choice">
+            <input type="radio" name="product_type" value="hat" />
+            Hat
+          </label>
+          <label class="choice">
+            <input type="radio" name="product_type" value="mug" />
+            Mug
+          </label>
+        </div>
+      </label>
       <div class="row">
         <label>
           Company name
@@ -280,10 +384,18 @@
         </label>
       </div>
       <label>
+        Design brief <span style="font-weight:400;letter-spacing:0;text-transform:none;opacity:0.75">(optional)</span>
+        <textarea
+          name="design_prompt"
+          placeholder="Minimal wordmark, navy/cream, no mascot. Keep the real logo if possible."
+          maxlength="1200"
+        ></textarea>
+      </label>
+      <label>
         Candidate photo
         <input type="file" name="photo" accept="image/*" required />
       </label>
-      <button type="submit" id="submit">Generate jersey</button>
+      <button type="submit" id="submit">Generate</button>
     </form>
 
     <p class="status" id="status" aria-live="polite"></p>
@@ -291,40 +403,46 @@
     <p class="section-label" id="previewLabel">Preview</p>
     <section class="results primary" id="results">
       <figure>
-        <figcaption>Style mockup</figcaption>
-        <img id="jerseyImg" alt="Generated jersey style mockup" />
-        <a class="dl" id="jerseyDl" download="jersey.png">Download PNG</a>
+        <figcaption id="mockupCaption">Style mockup</figcaption>
+        <img id="jerseyImg" alt="Generated product style mockup" />
+        <a class="dl" id="jerseyDl" download="mockup.png">Download PNG</a>
       </figure>
       <figure>
-        <figcaption>Wearing jersey</figcaption>
-        <img id="tryonImg" alt="Candidate wearing jersey" />
+        <figcaption id="tryonCaption">Try-on</figcaption>
+        <img id="tryonImg" alt="Candidate with product" />
         <a class="dl" id="tryonDl" download="tryon.png">Download PNG</a>
       </figure>
     </section>
 
     <p class="section-label" id="layersLabel">Printify print layers</p>
     <section class="results layers" id="layerResults">
-      <figure>
+      <figure class="layer-card" id="frontCard">
         <figcaption>Front</figcaption>
         <img id="frontImg" alt="Front print layer" />
         <a class="dl" id="frontDl" download="front.png">Download</a>
       </figure>
-      <figure>
+      <figure class="layer-card" id="backCard">
         <figcaption>Back</figcaption>
         <img id="backImg" alt="Back print layer" />
         <a class="dl" id="backDl" download="back.png">Download</a>
       </figure>
-      <figure>
+      <figure class="layer-card" id="sleeveCard">
         <figcaption>Sleeve</figcaption>
         <img id="sleeveImg" alt="Sleeve print layer" />
         <a class="dl" id="sleeveDl" download="sleeve.png">Download</a>
       </figure>
-      <figure>
+      <figure class="layer-card" id="neckCard">
         <figcaption>Neck</figcaption>
         <img id="neckImg" alt="Neck print layer" />
         <a class="dl" id="neckDl" download="neck.png">Download</a>
       </figure>
     </section>
+
+    <aside class="review" id="reviewBox">
+      <h2>Design review</h2>
+      <span class="badge" id="reviewBadge">—</span>
+      <p id="reviewMsg"></p>
+    </aside>
 
     <aside class="printify" id="printifyBox">
       <h2>Printify draft</h2>
@@ -343,7 +461,12 @@
     const layersLabel = document.getElementById("layersLabel");
 
     function setLayer(imgId, dlId, dataUrl, filename) {
-      if (!dataUrl) return;
+      const card = document.getElementById(imgId.replace("Img", "Card"));
+      if (!dataUrl) {
+        if (card) card.hidden = true;
+        return;
+      }
+      if (card) card.hidden = false;
       document.getElementById(imgId).src = dataUrl;
       const dl = document.getElementById(dlId);
       dl.href = dataUrl;
@@ -357,9 +480,10 @@
       previewLabel.classList.remove("show");
       layersLabel.classList.remove("show");
       document.getElementById("printifyBox").classList.remove("show");
+      document.getElementById("reviewBox").classList.remove("show");
       statusEl.className = "status";
       statusEl.textContent =
-        "Generating… usually a few minutes (print layers, style mockup, try-on, then Printify). Watch the terminal for step logs.";
+        "Generating… may take several minutes (print art, brand review/redo loop, mockup, try-on, Printify). Watch the terminal for step logs.";
       submitBtn.disabled = true;
 
       try {
@@ -372,6 +496,12 @@
           throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
         }
 
+        const label = data.product_label || data.product_type || "Product";
+        document.getElementById("mockupCaption").textContent = `${label} mockup`;
+        document.getElementById("tryonCaption").textContent =
+          data.product_type === "mug" ? "Holding mug" :
+          data.product_type === "hat" ? "Wearing hat" : "Wearing jersey";
+
         document.getElementById("jerseyImg").src = data.jersey_png;
         document.getElementById("tryonImg").src = data.tryon_png;
 
@@ -379,7 +509,7 @@
         const tryonDl = document.getElementById("tryonDl");
         jerseyDl.href = data.jersey_png;
         tryonDl.href = data.tryon_png;
-        jerseyDl.download = data.jersey_filename || "jersey.png";
+        jerseyDl.download = data.jersey_filename || "mockup.png";
         tryonDl.download = data.tryon_filename || "tryon.png";
 
         const layers = data.layers || {};
@@ -395,7 +525,38 @@
           layerResults.classList.add("show");
         }
         statusEl.className = "status ok";
-        statusEl.textContent = "Done — download the PNGs below.";
+        const color = data.blank_color || data.shirt_color;
+        statusEl.textContent = color
+          ? `Done — ${label}, color ${color}. Download the PNGs below.`
+          : `Done — ${label}. Download the PNGs below.`;
+
+        const reviewBox = document.getElementById("reviewBox");
+        const reviewBadge = document.getElementById("reviewBadge");
+        const reviewMsg = document.getElementById("reviewMsg");
+        const review = data.review || null;
+        if (review) {
+          reviewBox.classList.add("show");
+          const approved = review.decision === "approve";
+          reviewBadge.className = "badge" + (approved ? " ok" : "");
+          reviewBadge.textContent = approved
+            ? `Approved · attempt ${review.attempts}/${review.max_attempts}`
+            : `Best effort · ${review.attempts}/${review.max_attempts} attempts`;
+          const latest = review.latest || {};
+          const bits = [];
+          if (typeof latest.score === "number") bits.push(`Score ${latest.score}/10`);
+          if (latest.brand_alignment) bits.push(latest.brand_alignment);
+          if (latest.prompt_alignment) bits.push(latest.prompt_alignment);
+          if (Array.isArray(latest.issues) && latest.issues.length) {
+            bits.push("Issues: " + latest.issues.join("; "));
+          }
+          if (!approved && latest.redo_instructions) {
+            bits.push("Last redo notes: " + latest.redo_instructions);
+          }
+          if (review.attempts > 1) {
+            bits.push(`Redid design ${review.attempts - 1} time(s) after critic feedback.`);
+          }
+          reviewMsg.textContent = bits.join(" — ") || "Review completed.";
+        }
 
         const printifyBox = document.getElementById("printifyBox");
         const printifyMsg = document.getElementById("printifyMsg");
@@ -403,19 +564,16 @@
         printifyBox.classList.add("show");
         if (data.printify) {
           const positions = (data.printify.positions || []).join(", ") || "front";
-          const color = data.printify.shirt_color || data.shirt_color || "unknown";
+          const pColor = data.printify.blank_color || data.printify.shirt_color || color;
+          const colorPart = pColor ? `; color: ${pColor}` : "";
           printifyMsg.textContent =
-            `Draft product “${data.printify.title}” created (${data.printify.variant_count} variants; color: ${color}; positions: ${positions}). Ready for future ordering.`;
+            `Draft “${data.printify.title}” created (${data.printify.variant_count} variants${colorPart}; positions: ${positions}). Ready for future ordering.`;
           printifyLink.hidden = false;
           printifyLink.href = data.printify.dashboard_url;
         } else {
           printifyLink.hidden = true;
           printifyMsg.textContent =
             data.printify_error || "Printify draft was not created.";
-        }
-        if (data.shirt_color) {
-          statusEl.textContent =
-            `Done — shirt color ${data.shirt_color}. Download the PNGs below.`;
         }
       } catch (err) {
         statusEl.className = "status error";

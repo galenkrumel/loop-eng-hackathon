@@ -1,4 +1,4 @@
-"""Printify API client: upload artwork and create draft t-shirt products."""
+"""Printify API client: upload artwork and create draft products."""
 
 from __future__ import annotations
 
@@ -21,7 +21,7 @@ DEFAULT_COLORS = FALLBACK_COLORS  # backwards-compatible alias
 DEFAULT_SIZES = frozenset({"S", "M", "L", "XL", "2XL"})
 DEFAULT_PRICE_CENTS = 2499  # $24.99 retail placeholder
 
-# Preferred print positions in display / generation order.
+# Preferred print positions in display / generation order (tee default).
 PREFERRED_POSITIONS = (
     "front",
     "back",
@@ -30,9 +30,63 @@ PREFERRED_POSITIONS = (
     "neck",
 )
 
+# Product catalog: tee (jersey), hat (DTF front), mug (sublimation wrap).
+PRODUCT_TYPES: dict[str, dict[str, Any]] = {
+    "tee": {
+        "label": "T-shirt",
+        "blueprint_id": 12,
+        "print_provider_id": 99,
+        "preferred_positions": (
+            "front",
+            "back",
+            "left_sleeve",
+            "right_sleeve",
+            "neck",
+        ),
+        "has_color": True,
+        "sizes": frozenset({"S", "M", "L", "XL", "2XL"}),
+        "price_cents": 2499,
+        "fallback_colors": FALLBACK_COLORS,
+    },
+    "hat": {
+        "label": "Hat",
+        # OTTO Cap Low Profile Baseball Cap — DTF front via Printify Choice
+        "blueprint_id": 1108,
+        "print_provider_id": 99,
+        "preferred_positions": ("front",),
+        "has_color": True,
+        "sizes": frozenset({"One size"}),
+        "price_cents": 2499,
+        "fallback_colors": frozenset(
+            {"Black", "Dark Green", "Dark Navy", "Khaki", "Red", "Royal", "White"}
+        ),
+    },
+    "mug": {
+        "label": "Mug",
+        # Ceramic Mug 11oz/15oz — dye-sublimation front wrap
+        "blueprint_id": 478,
+        "print_provider_id": 99,
+        "preferred_positions": ("front",),
+        "has_color": False,
+        "sizes": frozenset({"11oz", "15oz"}),
+        "price_cents": 1999,
+        "fallback_colors": frozenset(),
+    },
+}
+
 
 class PrintifyError(RuntimeError):
     """Raised when a Printify API call fails."""
+
+
+def get_product_config(product_type: str) -> dict[str, Any]:
+    key = (product_type or "tee").strip().lower()
+    if key not in PRODUCT_TYPES:
+        raise PrintifyError(
+            f"Unknown product_type {product_type!r}. "
+            f"Choose one of: {', '.join(sorted(PRODUCT_TYPES))}."
+        )
+    return PRODUCT_TYPES[key]
 
 
 def _token() -> str:
@@ -179,7 +233,7 @@ def resolve_shirt_color(
         if soft_matches:
             return max(soft_matches, key=len)
     # Stable default if the model returns something unknown.
-    for preferred in ("Black", "Navy", "White"):
+    for preferred in ("Black", "Navy", "White", "Dark Navy", "Royal"):
         if preferred in palette:
             return preferred
     return sorted(palette)[0]
@@ -190,24 +244,40 @@ def _select_variants(
     *,
     colors: frozenset[str] | set[str] | None = None,
     sizes: frozenset[str] | set[str] | None = None,
+    require_color: bool = True,
 ) -> list[dict[str, Any]]:
     color_set = set(colors) if colors is not None else None
     size_set = set(sizes) if sizes is not None else set(DEFAULT_SIZES)
-    selected = [
-        v
-        for v in variants
-        if (color_set is None or v.get("options", {}).get("color") in color_set)
-        and v.get("options", {}).get("size") in size_set
-    ]
-    if not selected and colors is not None:
+    selected = []
+    for v in variants:
+        opts = v.get("options") or {}
+        size = opts.get("size")
+        color = opts.get("color")
+        if size_set and size not in size_set:
+            # Some products only have size; others only color — if size key missing, allow.
+            if "size" in opts:
+                continue
+        if require_color and color_set is not None:
+            if color not in color_set:
+                continue
+        selected.append(v)
+
+    if not selected and colors is not None and require_color:
         # Color was forced but sizes mismatched — keep the color, any size.
         selected = [
             v
             for v in variants
             if v.get("options", {}).get("color") in color_set
         ][:20]
+    if not selected and not require_color:
+        # Size-only products (e.g. mugs): take matching sizes or all.
+        selected = [
+            v
+            for v in variants
+            if not size_set or v.get("options", {}).get("size") in size_set
+            or "size" not in (v.get("options") or {})
+        ]
     if not selected:
-        # Fallback: first 20 variants
         selected = variants[:20]
     if not selected:
         raise PrintifyError("No Printify variants available for this blueprint.")
@@ -284,41 +354,64 @@ def _mockup_urls(product: dict[str, Any]) -> list[dict[str, Any]]:
     return out
 
 
-async def create_jersey_product(
+async def create_product(
     *,
     title: str,
     description: str,
     images_by_position: dict[str, str],
-    shirt_color: str | None = None,
+    product_type: str = "tee",
+    blank_color: str | None = None,
     shop_id: int | None = None,
-    blueprint_id: int = DEFAULT_BLUEPRINT_ID,
-    print_provider_id: int | None = None,
-    price_cents: int = DEFAULT_PRICE_CENTS,
+    price_cents: int | None = None,
 ) -> dict[str, Any]:
-    """Create a draft Unisex Jersey tee with print-ready art on supported positions."""
+    """Create a draft Printify product for tee, hat, or mug."""
     if not images_by_position:
         raise PrintifyError("At least one print-position image id is required.")
 
-    provider = (
-        print_provider_id
-        if print_provider_id is not None
-        else resolve_print_provider_id()
-    )
+    config = get_product_config(product_type)
+    blueprint_id = int(config["blueprint_id"])
+    provider = int(config["print_provider_id"])
+    env_provider = os.getenv("PRINTIFY_PRINT_PROVIDER_ID", "").strip()
+    if env_provider and product_type == "tee":
+        # Tee keeps optional env override; hat/mug use fixed working providers.
+        provider = int(env_provider)
+
+    preferred_positions: tuple[str, ...] = tuple(config["preferred_positions"])
+    has_color = bool(config["has_color"])
+    size_set = set(config["sizes"])
+    retail = int(price_cents if price_cents is not None else config["price_cents"])
+
     sid = shop_id if shop_id is not None else await resolve_shop_id()
     all_variants = await fetch_variants(blueprint_id, provider)
-    allowed_colors = set(catalog_colors(all_variants)) or set(FALLBACK_COLORS)
-    chosen_color = resolve_shirt_color(shirt_color, allowed=allowed_colors)
-    variants = _select_variants(all_variants, colors={chosen_color})
+
+    chosen_color: str | None = None
+    if has_color:
+        allowed_colors = set(catalog_colors(all_variants)) or set(
+            config.get("fallback_colors") or FALLBACK_COLORS
+        )
+        chosen_color = resolve_shirt_color(blank_color, allowed=allowed_colors)
+        variants = _select_variants(
+            all_variants,
+            colors={chosen_color},
+            sizes=size_set,
+            require_color=True,
+        )
+    else:
+        variants = _select_variants(
+            all_variants,
+            colors=None,
+            sizes=size_set,
+            require_color=False,
+        )
+
     variant_ids = [int(v["id"]) for v in variants]
     supported = available_positions(variants)
 
     placeholders: list[dict[str, Any]] = []
     used_positions: list[str] = []
-    for position in PREFERRED_POSITIONS:
+    for position in preferred_positions:
         image_id = images_by_position.get(position)
-        if not image_id:
-            continue
-        if position not in supported:
+        if not image_id or position not in supported:
             continue
         placeholders.append(
             {
@@ -328,9 +421,11 @@ async def create_jersey_product(
         )
         used_positions.append(position)
 
-    # Allow any extra catalog positions the caller provided.
     for position, image_id in images_by_position.items():
         if position in used_positions or position not in supported:
+            continue
+        # Skip embroidery-only positions unless explicitly preferred.
+        if "embroidery" in position and position not in preferred_positions:
             continue
         placeholders.append(
             {
@@ -353,7 +448,7 @@ async def create_jersey_product(
         "blueprint_id": blueprint_id,
         "print_provider_id": provider,
         "variants": [
-            {"id": vid, "price": price_cents, "is_enabled": True}
+            {"id": vid, "price": retail, "is_enabled": True}
             for vid in variant_ids
         ],
         "print_areas": [
@@ -378,9 +473,11 @@ async def create_jersey_product(
         "shop_id": sid,
         "product_id": product_id,
         "title": product.get("title", title),
+        "product_type": product_type,
         "blueprint_id": blueprint_id,
         "print_provider_id": provider,
         "shirt_color": chosen_color,
+        "blank_color": chosen_color,
         "variant_count": len(variant_ids),
         "positions": used_positions,
         "placeholder_sizes": {
@@ -394,6 +491,30 @@ async def create_jersey_product(
     }
 
 
+# Backwards-compatible alias
+async def create_jersey_product(
+    *,
+    title: str,
+    description: str,
+    images_by_position: dict[str, str],
+    shirt_color: str | None = None,
+    shop_id: int | None = None,
+    blueprint_id: int = DEFAULT_BLUEPRINT_ID,
+    print_provider_id: int | None = None,
+    price_cents: int = DEFAULT_PRICE_CENTS,
+) -> dict[str, Any]:
+    _ = blueprint_id, print_provider_id  # legacy kwargs ignored; tee config wins
+    return await create_product(
+        title=title,
+        description=description,
+        images_by_position=images_by_position,
+        product_type="tee",
+        blank_color=shirt_color,
+        shop_id=shop_id,
+        price_cents=price_cents,
+    )
+
+
 async def upload_and_create_draft(
     *,
     images_by_position: dict[str, bytes],
@@ -401,10 +522,14 @@ async def upload_and_create_draft(
     title: str,
     description: str,
     shirt_color: str | None = None,
+    blank_color: str | None = None,
+    product_type: str = "tee",
 ) -> dict[str, Any]:
-    """Upload print-ready layers then create a multi-position Printify draft."""
+    """Upload print-ready layers then create a Printify draft."""
     if not images_by_position:
         raise PrintifyError("images_by_position must not be empty.")
+
+    color = blank_color if blank_color is not None else shirt_color
 
     # Deduplicate uploads when left/right sleeve share the same artwork bytes.
     hash_to_upload_id: dict[str, str] = {}
@@ -423,11 +548,12 @@ async def upload_and_create_draft(
             upload_ids.append(upload_id)
         position_to_upload_id[position] = hash_to_upload_id[digest]
 
-    product = await create_jersey_product(
+    product = await create_product(
         title=title,
         description=description,
         images_by_position=position_to_upload_id,
-        shirt_color=shirt_color,
+        product_type=product_type,
+        blank_color=color,
     )
     product["upload_ids"] = upload_ids
     product["uploads_by_position"] = position_to_upload_id

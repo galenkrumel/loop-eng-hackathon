@@ -1,4 +1,4 @@
-"""Jersey design + try-on app."""
+"""Merch design + try-on app (tee, hat, mug)."""
 
 from __future__ import annotations
 
@@ -13,6 +13,13 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
+from brand_lookup import (
+    BrandProfile,
+    brand_prompt_guidance,
+    download_preferred_logo,
+    lookup_brand,
+)
+from design_critic import DesignReview, max_review_attempts, review_design
 from openrouter_chat import OpenRouterChatError, chat_json
 from openrouter_images import (
     OpenRouterImageError,
@@ -22,7 +29,9 @@ from openrouter_images import (
 )
 from printify_client import (
     FALLBACK_COLORS,
+    PRODUCT_TYPES,
     PrintifyError,
+    get_product_config,
     list_catalog_colors,
     upload_and_create_draft,
 )
@@ -42,9 +51,11 @@ STATIC_DIR = APP_DIR / "static"
 app = FastAPI(title="Jersey Design App")
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
-# Aspect ratios matched to Printify Choice Bella+Canvas 3001 placeholders (~3:4 front/back).
 FRONT_BACK_ASPECT = "3:4"
 SQUARE_ASPECT = "1:1"
+# Hat front panel ~1500×600; mug wrap ~2475×1155
+WIDE_PANEL_ASPECT = "3:1"
+MUG_WRAP_ASPECT = "2:1"
 
 _DARK_NAME_HINTS = (
     "black",
@@ -83,130 +94,313 @@ def _slug(text: str) -> str:
     return cleaned[:40] or "item"
 
 
-def _shirt_is_dark(shirt_color: str, ink_hint: str | None = None) -> bool:
+def _normalize_product_type(raw: str | None) -> str:
+    key = (raw or "tee").strip().lower()
+    aliases = {
+        "t-shirt": "tee",
+        "tshirt": "tee",
+        "shirt": "tee",
+        "jersey": "tee",
+        "cap": "hat",
+        "baseball cap": "hat",
+        "coffee mug": "mug",
+    }
+    key = aliases.get(key, key)
+    if key not in PRODUCT_TYPES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"product_type must be one of: {', '.join(sorted(PRODUCT_TYPES))}",
+        )
+    return key
+
+
+def _shirt_is_dark(blank_color: str, ink_hint: str | None = None) -> bool:
     if ink_hint in {"light", "light_ink", "white_ink"}:
         return True
     if ink_hint in {"dark", "dark_ink", "black_ink"}:
         return False
-    lower = shirt_color.lower()
+    lower = blank_color.lower()
     return any(hint in lower for hint in _DARK_NAME_HINTS)
 
 
-def _ink_guidance(shirt_color: str, ink_hint: str | None = None) -> str:
-    if _shirt_is_dark(shirt_color, ink_hint):
+def _ink_guidance(blank_color: str, ink_hint: str | None = None) -> str:
+    if _shirt_is_dark(blank_color, ink_hint):
         return (
-            f"The blank tee is {shirt_color} (dark / saturated). Use light / high-contrast ink "
-            f"(white, cream, bright accents) so the print reads clearly on {shirt_color}."
+            f"The blank product is {blank_color} (dark / saturated). Use light / high-contrast "
+            f"ink (white, cream, bright accents) so the print reads clearly on {blank_color}."
         )
     return (
-        f"The blank tee is {shirt_color} (light / pale). Use dark / high-contrast ink "
-        f"(black, navy, deep brand colors) so the print reads clearly on {shirt_color}."
+        f"The blank product is {blank_color} (light / pale). Use dark / high-contrast ink "
+        f"(black, navy, deep brand colors) so the print reads clearly on {blank_color}."
     )
 
 
-def _print_art_rules(shirt_color: str, ink_hint: str | None = None) -> str:
+def _print_art_rules(blank_color: str | None, ink_hint: str | None = None) -> str:
+    contrast = (
+        _ink_guidance(blank_color, ink_hint)
+        if blank_color
+        else (
+            "Design for a white ceramic mug — use saturated, high-contrast colors that read "
+            "clearly on white."
+        )
+    )
     return (
         "CRITICAL BACKGROUND: output a PNG with a TRUE transparent alpha channel. "
         "If the model cannot emit alpha, fill ONLY the empty backdrop with a flat solid "
         "chroma-key color #00FF00 (pure green) and put NOTHING else on that green — no "
         "gradients, no checkerboard, no paper texture, no white matte. "
-        "Print-ready flat graphic only: no shirt silhouette, no fabric photo, no garment "
-        "mockup, no hanger, no 3D product shot, no shadows under a tee, no white or colored "
-        "rectangle behind the art. Sharp high-contrast vector-like artwork suitable for DTG. "
-        f"{_ink_guidance(shirt_color, ink_hint)} "
+        "Print-ready flat graphic only: no product silhouette, no fabric/ceramic photo, no "
+        "mockup frame, no hanger, no 3D product shot. Sharp high-contrast vector-like artwork "
+        f"suitable for DTG/DTF/sublimation. {contrast} "
         "Centered composition, no watermark, no extra people or scenery."
     )
 
 
+def _user_brief_block(design_prompt: str | None) -> str:
+    brief = (design_prompt or "").strip()
+    if not brief:
+        return ""
+    return f" USER DESIGN BRIEF (follow closely): {brief}."
+
+
+def _redo_block(redo_instructions: str | None) -> str:
+    redo = (redo_instructions or "").strip()
+    if not redo:
+        return ""
+    return (
+        " CRITICAL REVISION FROM DESIGN QA (must apply): "
+        f"{redo}"
+    )
+
+
 def front_print_prompt(
-    company_name: str, shirt_color: str, ink_hint: str | None = None
+    company_name: str,
+    blank_color: str,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+    has_logo_ref: bool = False,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
 ) -> str:
+    guidance = brand_prompt_guidance(brand, has_logo_ref=has_logo_ref)
     return (
         f'Create a front-chest print graphic for the company "{company_name}" that will be '
-        f"printed on a {shirt_color} Bella+Canvas 3001 tee. Infer a cohesive brand crest or "
-        f"wordmark (colors, typography, motifs) from the company name. Athletic sports-jersey "
-        f"style emblem for the center chest. {_print_art_rules(shirt_color, ink_hint)}"
+        f"printed on a {blank_color} Bella+Canvas 3001 tee. {guidance} Athletic sports-jersey "
+        f"style emblem for the center chest."
+        f"{_user_brief_block(design_prompt)}"
+        f"{_redo_block(redo_instructions)} "
+        f"{_print_art_rules(blank_color, ink_hint)}"
     )
 
 
 def back_print_prompt(
-    candidate_name: str, shirt_color: str, ink_hint: str | None = None
+    candidate_name: str,
+    blank_color: str,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
 ) -> str:
+    color_bit = ""
+    if brand and brand.color_hexes:
+        color_bit = (
+            f" Prefer lettering colors that harmonize with brand palette "
+            f"({', '.join(brand.color_hexes)}) while staying high-contrast on {blank_color}."
+        )
     return (
         f'Create a back-of-jersey name print: the player name "{candidate_name}" in large '
         f"classic athletic block lettering (bold, arched or straight). Designed for a "
-        f"{shirt_color} tee — letters must contrast strongly with {shirt_color}. "
+        f"{blank_color} tee — letters must contrast strongly with {blank_color}.{color_bit}"
+        f"{_user_brief_block(design_prompt)}"
+        f"{_redo_block(redo_instructions)} "
         f"No shirt body, no number required unless it fits cleanly under the name. "
-        f"{_print_art_rules(shirt_color, ink_hint)}"
+        f"{_print_art_rules(blank_color, ink_hint)}"
     )
 
 
 def sleeve_print_prompt(
-    company_name: str, shirt_color: str, ink_hint: str | None = None
+    company_name: str,
+    blank_color: str,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+    has_logo_ref: bool = False,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
 ) -> str:
+    guidance = brand_prompt_guidance(brand, has_logo_ref=has_logo_ref)
     return (
-        f'Create a small square sleeve print mark for "{company_name}" on a {shirt_color} tee: '
-        f"a simplified crest, monogram, or logo that reads clearly at sleeve size. Keep it "
-        f"minimal. {_print_art_rules(shirt_color, ink_hint)}"
+        f'Create a small square sleeve print mark for "{company_name}" on a {blank_color} tee: '
+        f"{guidance} Simplified crest or logo that reads clearly at sleeve size. Keep it "
+        f"minimal."
+        f"{_user_brief_block(design_prompt)}"
+        f"{_redo_block(redo_instructions)} "
+        f"{_print_art_rules(blank_color, ink_hint)}"
     )
 
 
 def neck_print_prompt(
-    company_name: str, shirt_color: str, ink_hint: str | None = None
+    company_name: str,
+    blank_color: str,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+    has_logo_ref: bool = False,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
 ) -> str:
+    guidance = brand_prompt_guidance(brand, has_logo_ref=has_logo_ref)
     return (
-        f'Create a small inside-neck label graphic for "{company_name}" on a {shirt_color} tee: '
-        f"compact wordmark or logo sized for a neck tag, clean and legible at small print size. "
-        f"{_print_art_rules(shirt_color, ink_hint)}"
+        f'Create a small inside-neck label graphic for "{company_name}" on a {blank_color} tee: '
+        f"{guidance} Compact wordmark or logo sized for a neck tag, clean and legible at "
+        f"small print size."
+        f"{_user_brief_block(design_prompt)}"
+        f"{_redo_block(redo_instructions)} "
+        f"{_print_art_rules(blank_color, ink_hint)}"
+    )
+
+
+def hat_front_prompt(
+    company_name: str,
+    blank_color: str,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+    has_logo_ref: bool = False,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
+) -> str:
+    guidance = brand_prompt_guidance(brand, has_logo_ref=has_logo_ref)
+    return (
+        f'Create a wide front-panel baseball-cap print for "{company_name}" on a '
+        f"{blank_color} hat. {guidance} Horizontal crest / wordmark that fits a curved cap "
+        f"front (roughly 2.5:1). Keep it bold and simple for DTF."
+        f"{_user_brief_block(design_prompt)}"
+        f"{_redo_block(redo_instructions)} "
+        f"{_print_art_rules(blank_color, ink_hint)}"
+    )
+
+
+def mug_front_prompt(
+    company_name: str,
+    candidate_name: str,
+    *,
+    brand: BrandProfile | None = None,
+    has_logo_ref: bool = False,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
+) -> str:
+    guidance = brand_prompt_guidance(brand, has_logo_ref=has_logo_ref)
+    return (
+        f'Create a wide mug wrap graphic for "{company_name}" featuring the name '
+        f'"{candidate_name}". {guidance} Landscape layout (~2:1) for an 11oz ceramic mug wrap: '
+        f"brand crest plus candidate name, festive or athletic merch style."
+        f"{_user_brief_block(design_prompt)}"
+        f"{_redo_block(redo_instructions)} "
+        f"{_print_art_rules(None)}"
     )
 
 
 def style_mockup_prompt(
-    company_name: str, candidate_name: str, shirt_color: str
+    product_type: str,
+    company_name: str,
+    candidate_name: str,
+    blank_color: str | None,
+    *,
+    design_prompt: str | None = None,
+    redo_instructions: str | None = None,
 ) -> str:
+    extra = f"{_user_brief_block(design_prompt)}{_redo_block(redo_instructions)}"
+    if product_type == "hat":
+        return (
+            f'Create a photorealistic baseball cap product mockup for "{company_name}". '
+            f"The blank hat MUST be {blank_color}. Place the reference front-panel artwork on "
+            f"the front of the cap. Clean neutral background, sharp readable branding, no "
+            f"watermark, no extra people.{extra}"
+        )
+    if product_type == "mug":
+        return (
+            f'Create a photorealistic white ceramic mug product mockup for "{company_name}" '
+            f'with "{candidate_name}" on the wrap. Use the reference artwork as the printed '
+            f"design on the mug. Clean neutral background, sharp readable branding, no "
+            f"watermark, no extra people.{extra}"
+        )
     return (
         f'Create a photorealistic sports jersey / t-shirt product mockup for "{company_name}" '
-        f'with the player name "{candidate_name}". The blank garment MUST be a {shirt_color} '
-        f"short-sleeve tee (exact shirt color: {shirt_color}), not white unless the color is "
+        f'with the player name "{candidate_name}". The blank garment MUST be a {blank_color} '
+        f"short-sleeve tee (exact shirt color: {blank_color}), not white unless the color is "
         f"White. Use the reference images as the exact print artwork: place the front crest on "
         f"the chest and imagine the name print on the back. Front-view flat or lightly worn "
         f"jersey on a clean neutral background, athletic cut, sharp readable branding, no "
-        f"watermark, no extra people."
+        f"watermark, no extra people.{extra}"
     )
 
 
-def tryon_prompt(company_name: str, candidate_name: str, shirt_color: str) -> str:
+def tryon_prompt(
+    product_type: str,
+    company_name: str,
+    candidate_name: str,
+    blank_color: str | None,
+) -> str:
+    if product_type == "hat":
+        return (
+            f"Using the reference photos: keep the exact likeness of the person in the first "
+            f"image. Put the {blank_color} branded baseball cap from the second reference on "
+            f"their head ({company_name}). Natural portrait, photorealistic, clean background. "
+            f"Do not change identity. No watermark."
+        )
+    if product_type == "mug":
+        return (
+            f"Using the reference photos: keep the exact likeness of the person in the first "
+            f"image. Have them hold the branded mug from the second reference "
+            f'({company_name}, name "{candidate_name}"). Natural portrait, photorealistic, '
+            f"clean background. Do not change identity. No watermark."
+        )
     return (
         f"Using the reference photos: keep the exact likeness, face, hair, and body of the "
         f"person in the first reference image. Dress them in the sports jersey from the "
-        f"second reference image (the {shirt_color} {company_name} jersey with the name "
-        f'"{candidate_name}"). Keep the shirt color as {shirt_color}. Natural standing or '
+        f"second reference image (the {blank_color} {company_name} jersey with the name "
+        f'"{candidate_name}"). Keep the shirt color as {blank_color}. Natural standing or '
         f"three-quarter portrait, realistic fabric fit and folds, consistent lighting, "
         f"photorealistic. Do not change the person's identity. Clean background. No watermark."
     )
 
 
-async def choose_shirt_color(
+async def choose_blank_color(
     company_name: str,
     available_colors: list[str],
+    *,
+    product_label: str = "t-shirt",
+    brand: BrandProfile | None = None,
 ) -> tuple[str, str, str]:
-    """Pick a Printify blank color from the full catalog.
+    """Pick a Printify blank color from the catalog.
 
-    Returns (color, reason, ink_hint) where ink_hint is 'light' (light ink on dark
-    shirts) or 'dark' (dark ink on light shirts).
+    Returns (color, reason, ink_hint).
     """
     colors = available_colors or sorted(FALLBACK_COLORS)
     choices = ", ".join(colors)
+    brand_bits = ""
+    if brand:
+        if brand.color_hexes:
+            brand_bits += f"Known brand palette hexes: {', '.join(brand.color_hexes)}.\n"
+        if brand.slogan:
+            brand_bits += f'Brand slogan: "{brand.slogan}".\n'
+        if brand.domain:
+            brand_bits += f"Domain: {brand.domain}.\n"
     data = await chat_json(
         system=(
-            "You are a merch art director. Choose exactly one t-shirt blank color from the "
-            "allowed Printify catalog list (copy the string EXACTLY). Prefer a color that "
-            "fits the brand and gives strong contrast for jersey-style prints. Also say "
+            f"You are a merch art director. Choose exactly one {product_label} blank color "
+            "from the allowed Printify catalog list (copy the string EXACTLY). Prefer a "
+            "color that fits the brand and gives strong contrast for prints. Also say "
             "whether print ink should be light (for dark/saturated blanks) or dark (for "
             "light/pale blanks). Respond with JSON only."
         ),
         user=(
             f'Company / brand name: "{company_name}"\n'
+            f"{brand_bits}"
+            f"Product: {product_label}\n"
             f"Allowed Printify colors ({len(colors)} exact strings): [{choices}]\n"
             'Return JSON: {"color": "<one exact allowed color>", '
             '"ink": "light" | "dark", "reason": "<one short sentence>"}'
@@ -241,8 +435,153 @@ async def choose_shirt_color(
     return matched, reason or f"Selected {matched} for brand contrast.", ink_hint
 
 
+# Backwards-compatible alias used by smoke tests
+async def choose_shirt_color(
+    company_name: str,
+    available_colors: list[str],
+) -> tuple[str, str, str]:
+    return await choose_blank_color(company_name, available_colors)
+
+
 def _transparent_layer(image_bytes: bytes) -> bytes:
     return ensure_transparent_background(image_bytes)
+
+
+async def _generate_print_and_mockup(
+    *,
+    ptype: str,
+    company: str,
+    candidate: str,
+    blank_color: str | None,
+    ink_hint: str | None,
+    brand: BrandProfile | None,
+    has_logo_ref: bool,
+    brand_refs: list[dict] | None,
+    design_prompt: str,
+    redo_instructions: str | None,
+    prior_front: bytes | None = None,
+) -> tuple[bytes, bytes, bytes, bytes, bytes, str]:
+    """Generate print layers + style mockup. Returns front/back/sleeve/neck/mockup + front prompt."""
+    front_bytes = back_bytes = sleeve_bytes = neck_bytes = b""
+
+    # Soft-reference prior front on redo so the image model can revise rather than start over.
+    print_refs = list(brand_refs or [])
+    if prior_front:
+        print_refs.append(reference_from_bytes(prior_front, "image/png"))
+    refs_or_none = print_refs or None
+
+    if ptype == "tee":
+        assert blank_color is not None
+        front_prompt = front_print_prompt(
+            company,
+            blank_color,
+            ink_hint,
+            brand=brand,
+            has_logo_ref=has_logo_ref,
+            design_prompt=design_prompt,
+            redo_instructions=redo_instructions,
+        )
+        front_raw, back_raw, sleeve_raw, neck_raw = await asyncio.gather(
+            generate_image(
+                front_prompt,
+                references=refs_or_none,
+                aspect_ratio=FRONT_BACK_ASPECT,
+            ),
+            generate_image(
+                back_print_prompt(
+                    candidate,
+                    blank_color,
+                    ink_hint,
+                    brand=brand,
+                    design_prompt=design_prompt,
+                    redo_instructions=redo_instructions,
+                ),
+                aspect_ratio=FRONT_BACK_ASPECT,
+            ),
+            generate_image(
+                sleeve_print_prompt(
+                    company,
+                    blank_color,
+                    ink_hint,
+                    brand=brand,
+                    has_logo_ref=has_logo_ref,
+                    design_prompt=design_prompt,
+                    redo_instructions=redo_instructions,
+                ),
+                references=refs_or_none,
+                aspect_ratio=SQUARE_ASPECT,
+            ),
+            generate_image(
+                neck_print_prompt(
+                    company,
+                    blank_color,
+                    ink_hint,
+                    brand=brand,
+                    has_logo_ref=has_logo_ref,
+                    design_prompt=design_prompt,
+                    redo_instructions=redo_instructions,
+                ),
+                references=refs_or_none,
+                aspect_ratio=SQUARE_ASPECT,
+            ),
+        )
+        front_bytes = _transparent_layer(front_raw)
+        back_bytes = _transparent_layer(back_raw)
+        sleeve_bytes = _transparent_layer(sleeve_raw)
+        neck_bytes = _transparent_layer(neck_raw)
+        style_refs = [
+            reference_from_bytes(front_bytes, "image/png"),
+            reference_from_bytes(back_bytes, "image/png"),
+        ]
+    elif ptype == "hat":
+        assert blank_color is not None
+        front_prompt = hat_front_prompt(
+            company,
+            blank_color,
+            ink_hint,
+            brand=brand,
+            has_logo_ref=has_logo_ref,
+            design_prompt=design_prompt,
+            redo_instructions=redo_instructions,
+        )
+        front_raw = await generate_image(
+            front_prompt,
+            references=refs_or_none,
+            aspect_ratio=WIDE_PANEL_ASPECT,
+        )
+        front_bytes = _transparent_layer(front_raw)
+        style_refs = [reference_from_bytes(front_bytes, "image/png")]
+    else:  # mug
+        front_prompt = mug_front_prompt(
+            company,
+            candidate,
+            brand=brand,
+            has_logo_ref=has_logo_ref,
+            design_prompt=design_prompt,
+            redo_instructions=redo_instructions,
+        )
+        front_raw = await generate_image(
+            front_prompt,
+            references=refs_or_none,
+            aspect_ratio=MUG_WRAP_ASPECT,
+        )
+        front_bytes = _transparent_layer(front_raw)
+        style_refs = [reference_from_bytes(front_bytes, "image/png")]
+
+    mockup_prompt = style_mockup_prompt(
+        ptype,
+        company,
+        candidate,
+        blank_color,
+        design_prompt=design_prompt,
+        redo_instructions=redo_instructions,
+    )
+    jersey_bytes = await generate_image(
+        mockup_prompt,
+        references=style_refs,
+        aspect_ratio=SQUARE_ASPECT,
+    )
+    return front_bytes, back_bytes, sleeve_bytes, neck_bytes, jersey_bytes, front_prompt
 
 
 @app.get("/")
@@ -252,7 +591,11 @@ async def index() -> FileResponse:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "app": "jersey-studio"}
+    return {
+        "ok": True,
+        "app": "jersey-studio",
+        "product_types": sorted(PRODUCT_TYPES),
+    }
 
 
 @app.post("/generate")
@@ -260,11 +603,17 @@ async def generate(
     company_name: str = Form(...),
     candidate_name: str = Form(...),
     photo: UploadFile = File(...),
+    product_type: str = Form("tee"),
+    design_prompt: str = Form(""),
 ) -> dict:
     company = company_name.strip()
     candidate = candidate_name.strip()
+    brief = (design_prompt or "").strip()
     if not company or not candidate:
         raise HTTPException(status_code=400, detail="Company and candidate names are required.")
+
+    ptype = _normalize_product_type(product_type)
+    config = get_product_config(ptype)
 
     photo_bytes = await photo.read()
     if not photo_bytes:
@@ -275,65 +624,140 @@ async def generate(
         raise HTTPException(status_code=400, detail="Upload must be an image.")
 
     run_id = uuid.uuid4().hex[:10]
-    prefix = f"{_slug(company)}_{_slug(candidate)}_{run_id}"
-    log.info("generate start company=%r candidate=%r run=%s", company, candidate, run_id)
+    prefix = f"{_slug(company)}_{_slug(candidate)}_{ptype}_{run_id}"
+    log.info(
+        "generate start company=%r candidate=%r product=%s run=%s brief=%r",
+        company,
+        candidate,
+        ptype,
+        run_id,
+        brief[:120] if brief else "",
+    )
+
+    brand = await lookup_brand(company)
+    logo_ref: dict | None = None
+    logo_bytes: bytes | None = None
+    if brand:
+        logo = await download_preferred_logo(brand)
+        if logo:
+            logo_bytes, logo_media = logo
+            logo_ref = reference_from_bytes(logo_bytes, logo_media)
+    has_logo_ref = logo_ref is not None
+    brand_refs = [logo_ref] if logo_ref else None
+
+    blank_color: str | None = None
+    color_reason = ""
+    ink_hint: str | None = None
+    available_colors: list[str] = []
+
+    front_bytes = back_bytes = sleeve_bytes = neck_bytes = b""
+    jersey_bytes = tryon_bytes = b""
+    review_history: list[dict] = []
+    final_decision = "approve"
+    attempts_used = 0
+    max_attempts = max_review_attempts()
 
     try:
-        log.info("step 0/5 loading Printify catalog colors + choosing shirt color…")
-        try:
-            available_colors = await list_catalog_colors()
-        except PrintifyError:
-            log.exception("catalog color fetch failed; using fallback palette")
-            available_colors = sorted(FALLBACK_COLORS)
-        log.info("catalog colors available=%d", len(available_colors))
+        if config["has_color"]:
+            log.info("step 0/6 loading Printify catalog colors + choosing blank color…")
+            try:
+                available_colors = await list_catalog_colors(
+                    blueprint_id=int(config["blueprint_id"]),
+                    print_provider_id=int(config["print_provider_id"]),
+                )
+            except PrintifyError:
+                log.exception("catalog color fetch failed; using fallback palette")
+                available_colors = sorted(config.get("fallback_colors") or FALLBACK_COLORS)
+            log.info("catalog colors available=%d", len(available_colors))
 
-        shirt_color, color_reason, ink_hint = await choose_shirt_color(
-            company, available_colors
-        )
-        log.info(
-            "shirt color=%r ink=%r reason=%r",
-            shirt_color,
-            ink_hint,
-            color_reason,
-        )
+            blank_color, color_reason, ink_hint = await choose_blank_color(
+                company,
+                available_colors,
+                product_label=str(config["label"]).lower(),
+                brand=brand,
+            )
+            log.info(
+                "blank color=%r ink=%r reason=%r",
+                blank_color,
+                ink_hint,
+                color_reason,
+            )
+        else:
+            log.info("step 0/6 mug has no blank color — white ceramic")
+            color_reason = "White ceramic mug (no color variants)."
 
-        log.info("step 1/5 generating print-ready layers (front, back, sleeve, neck)…")
-        front_raw, back_raw, sleeve_raw, neck_raw = await asyncio.gather(
-            generate_image(
-                front_print_prompt(company, shirt_color, ink_hint),
-                aspect_ratio=FRONT_BACK_ASPECT,
-            ),
-            generate_image(
-                back_print_prompt(candidate, shirt_color, ink_hint),
-                aspect_ratio=FRONT_BACK_ASPECT,
-            ),
-            generate_image(
-                sleeve_print_prompt(company, shirt_color, ink_hint),
-                aspect_ratio=SQUARE_ASPECT,
-            ),
-            generate_image(
-                neck_print_prompt(company, shirt_color, ink_hint),
-                aspect_ratio=SQUARE_ASPECT,
-            ),
-        )
-        front_bytes = _transparent_layer(front_raw)
-        back_bytes = _transparent_layer(back_raw)
-        sleeve_bytes = _transparent_layer(sleeve_raw)
-        neck_bytes = _transparent_layer(neck_raw)
+        redo_instructions: str | None = None
+        prior_front: bytes | None = None
 
-        log.info("step 2/5 generating style mockup for UI / try-on…")
-        jersey_bytes = await generate_image(
-            style_mockup_prompt(company, candidate, shirt_color),
-            references=[
-                reference_from_bytes(front_bytes, "image/png"),
-                reference_from_bytes(back_bytes, "image/png"),
-            ],
-            aspect_ratio=SQUARE_ASPECT,
-        )
+        for attempt in range(1, max_attempts + 1):
+            attempts_used = attempt
+            log.info(
+                "step 1/6 generating print + mockup (attempt %d/%d, brand=%s logo_ref=%s)…",
+                attempt,
+                max_attempts,
+                brand.source if brand else "none",
+                has_logo_ref,
+            )
+            (
+                front_bytes,
+                back_bytes,
+                sleeve_bytes,
+                neck_bytes,
+                jersey_bytes,
+                front_prompt,
+            ) = await _generate_print_and_mockup(
+                ptype=ptype,
+                company=company,
+                candidate=candidate,
+                blank_color=blank_color,
+                ink_hint=ink_hint,
+                brand=brand,
+                has_logo_ref=has_logo_ref,
+                brand_refs=brand_refs,
+                design_prompt=brief,
+                redo_instructions=redo_instructions,
+                prior_front=prior_front,
+            )
 
-        log.info("step 3/5 generating try-on…")
+            log.info("step 2/6 design critic review (attempt %d)…", attempt)
+            review: DesignReview = await review_design(
+                company_name=company,
+                candidate_name=candidate,
+                product_type=ptype,
+                blank_color=blank_color,
+                design_prompt=brief,
+                brand=brand,
+                has_logo_ref=has_logo_ref,
+                front_png=front_bytes,
+                mockup_png=jersey_bytes,
+                generation_brief=front_prompt,
+                logo_png=logo_bytes,
+                attempt=attempt,
+            )
+            review_history.append(review.to_dict())
+            final_decision = review.decision
+
+            if review.decision == "approve":
+                log.info("design approved on attempt %d score=%s", attempt, review.score)
+                break
+
+            if attempt >= max_attempts:
+                log.info(
+                    "design still redo after %d attempts — shipping best effort",
+                    max_attempts,
+                )
+                break
+
+            log.info(
+                "design redo requested: %s",
+                (review.redo_instructions or "")[:200],
+            )
+            redo_instructions = review.redo_instructions
+            prior_front = front_bytes
+
+        log.info("step 3/6 generating try-on…")
         tryon_bytes = await generate_image(
-            tryon_prompt(company, candidate, shirt_color),
+            tryon_prompt(ptype, company, candidate, blank_color),
             references=[
                 reference_from_bytes(photo_bytes, content_type),
                 reference_from_bytes(jersey_bytes, "image/png"),
@@ -343,76 +767,124 @@ async def generate(
         log.exception("OpenRouter failed")
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    layer_paths = {
-        "front": OUTPUTS_DIR / f"{prefix}_front.png",
-        "back": OUTPUTS_DIR / f"{prefix}_back.png",
-        "sleeve": OUTPUTS_DIR / f"{prefix}_sleeve.png",
-        "neck": OUTPUTS_DIR / f"{prefix}_neck.png",
-    }
-    layer_paths["front"].write_bytes(front_bytes)
-    layer_paths["back"].write_bytes(back_bytes)
-    layer_paths["sleeve"].write_bytes(sleeve_bytes)
-    layer_paths["neck"].write_bytes(neck_bytes)
+    # Persist outputs
+    front_path = OUTPUTS_DIR / f"{prefix}_front.png"
+    front_path.write_bytes(front_bytes)
+    layer_paths: dict[str, Path] = {"front": front_path}
+    if back_bytes:
+        layer_paths["back"] = OUTPUTS_DIR / f"{prefix}_back.png"
+        layer_paths["back"].write_bytes(back_bytes)
+    if sleeve_bytes:
+        layer_paths["sleeve"] = OUTPUTS_DIR / f"{prefix}_sleeve.png"
+        layer_paths["sleeve"].write_bytes(sleeve_bytes)
+    if neck_bytes:
+        layer_paths["neck"] = OUTPUTS_DIR / f"{prefix}_neck.png"
+        layer_paths["neck"].write_bytes(neck_bytes)
 
-    jersey_path = OUTPUTS_DIR / f"{prefix}_jersey.png"
+    jersey_path = OUTPUTS_DIR / f"{prefix}_mockup.png"
     tryon_path = OUTPUTS_DIR / f"{prefix}_tryon.png"
     jersey_path.write_bytes(jersey_bytes)
     tryon_path.write_bytes(tryon_bytes)
 
-    images_by_position = {
-        "front": front_bytes,
-        "back": back_bytes,
-        "left_sleeve": sleeve_bytes,
-        "right_sleeve": sleeve_bytes,
-        "neck": neck_bytes,
-    }
+    images_by_position: dict[str, bytes] = {"front": front_bytes}
+    if ptype == "tee":
+        images_by_position.update(
+            {
+                "back": back_bytes,
+                "left_sleeve": sleeve_bytes,
+                "right_sleeve": sleeve_bytes,
+                "neck": neck_bytes,
+            }
+        )
 
     printify_info: dict | None = None
     printify_error: str | None = None
     try:
-        log.info("step 4/5 uploading print layers to Printify (color=%s)…", shirt_color)
+        log.info(
+            "step 4/6 uploading to Printify product=%s color=%s…",
+            ptype,
+            blank_color,
+        )
+        label = config["label"]
+        color_bit = f" ({blank_color})" if blank_color else ""
         printify_info = await upload_and_create_draft(
             images_by_position=images_by_position,
             file_prefix=prefix,
-            shirt_color=shirt_color,
-            title=f"{company} — {candidate} Jersey ({shirt_color})",
+            product_type=ptype,
+            blank_color=blank_color,
+            title=f"{company} — {candidate} {label}{color_bit}",
             description=(
-                f"Custom jersey tee for {candidate}, branded for {company}. "
-                f"Blank color: {shirt_color}. "
-                "Print-ready front, back, sleeve, and neck artwork. "
-                "Draft product created by Jersey Studio for future Printify ordering."
+                f"Custom {label.lower()} for {candidate}, branded for {company}. "
+                + (f"Blank color: {blank_color}. " if blank_color else "")
+                + (f"Design brief: {brief}. " if brief else "")
+                + "Draft product created by Jersey Studio for future Printify ordering."
             ),
         )
         log.info(
-            "Printify product %s color=%s positions=%s",
+            "Printify product %s type=%s color=%s positions=%s",
             printify_info.get("product_id"),
-            printify_info.get("shirt_color"),
+            ptype,
+            printify_info.get("blank_color"),
             printify_info.get("positions"),
         )
     except PrintifyError as exc:
-        # Images still succeed even if Printify is down — surface the error separately.
         log.exception("Printify failed")
         printify_error = str(exc)
 
-    log.info("generate done run=%s color=%s", run_id, shirt_color)
+    log.info(
+        "generate done run=%s product=%s color=%s review=%s attempts=%d",
+        run_id,
+        ptype,
+        blank_color,
+        final_decision,
+        attempts_used,
+    )
+
+    layers: dict[str, str | None] = {
+        "front_png": to_data_url(front_bytes),
+        "front_filename": layer_paths["front"].name,
+        "back_png": to_data_url(back_bytes) if back_bytes else None,
+        "back_filename": layer_paths["back"].name if "back" in layer_paths else None,
+        "sleeve_png": to_data_url(sleeve_bytes) if sleeve_bytes else None,
+        "sleeve_filename": layer_paths["sleeve"].name if "sleeve" in layer_paths else None,
+        "neck_png": to_data_url(neck_bytes) if neck_bytes else None,
+        "neck_filename": layer_paths["neck"].name if "neck" in layer_paths else None,
+    }
+
+    latest = review_history[-1] if review_history else None
     return {
-        "shirt_color": shirt_color,
+        "product_type": ptype,
+        "product_label": config["label"],
+        "shirt_color": blank_color,
+        "blank_color": blank_color,
         "color_reason": color_reason,
         "catalog_color_count": len(available_colors),
+        "design_prompt": brief or None,
+        "brand": (
+            {
+                "title": brand.title,
+                "domain": brand.domain,
+                "slogan": brand.slogan,
+                "colors": brand.color_hexes,
+                "logo_count": len(brand.logo_urls),
+                "logo_used": has_logo_ref,
+                "source": brand.source,
+            }
+            if brand
+            else None
+        ),
+        "review": {
+            "decision": final_decision,
+            "attempts": attempts_used,
+            "max_attempts": max_attempts,
+            "latest": latest,
+            "history": review_history,
+        },
         "jersey_png": to_data_url(jersey_bytes),
         "tryon_png": to_data_url(tryon_bytes),
         "jersey_filename": jersey_path.name,
         "tryon_filename": tryon_path.name,
-        "layers": {
-            "front_png": to_data_url(front_bytes),
-            "back_png": to_data_url(back_bytes),
-            "sleeve_png": to_data_url(sleeve_bytes),
-            "neck_png": to_data_url(neck_bytes),
-            "front_filename": layer_paths["front"].name,
-            "back_filename": layer_paths["back"].name,
-            "sleeve_filename": layer_paths["sleeve"].name,
-            "neck_filename": layer_paths["neck"].name,
-        },
+        "layers": layers,
         "printify": printify_info,
         "printify_error": printify_error,
     }
