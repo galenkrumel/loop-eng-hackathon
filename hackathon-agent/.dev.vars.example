@@ -1,0 +1,17 @@
+# Copy to .dev.vars (gitignored) and fill in.
+# AkashML is OpenAI-compatible — grab a key from your AkashML dashboard.
+AKASHML_API_KEY=sk-...
+
+# Scrape_profile pays Zero (x402) capabilities from the worker. It needs a
+# Base wallet private key funded with a few dollars of USDC. Generate a fresh
+# one with `zero wallet generate` (doesn't touch your main Zero wallet), send
+# it USDC on Base, and paste it here. Without this, Scrape_profile returns
+# { error, code: "PAYMENT_NOT_CONFIGURED" } and every other tool still works.
+X402_PRIVATE_KEY=0x...
+# Optional: hard per-call USDC ceiling for Zero payments (default 0.10).
+# ZERO_MAX_PAY_USDC=0.10
+
+# Optional overrides (defaults live in wrangler.jsonc vars):
+# AKASHML_BASE_URL=https://api.akashml.com/v1
+# AKASHML_MODEL=Qwen/Qwen3.6-35B-A3B   # tool calling + vision
+# MODEL_CONTEXT_TOKENS=128000

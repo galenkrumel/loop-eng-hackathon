@@ -1,0 +1,86 @@
+{
+  // Barebones agent worker: one Durable Object per chat conversation
+  // (Agents SDK transport) + an MCP endpoint exposing the same tool harness.
+  // Local dev: `npm run dev` (vite on 8080 proxying to wrangler dev on 8787).
+  // Deploy: `npm run deploy` (vite build && wrangler deploy — serves the SPA
+  // from the assets binding on the same worker).
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "hackathon-agent",
+  "main": "worker/index.ts",
+  "compatibility_date": "2026-04-10",
+  "compatibility_flags": ["nodejs_compat"],
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    // Agent WebSocket/HTTP transport, MCP, and health must reach the worker;
+    // everything else is static SPA assets.
+    "run_worker_first": ["/agents/*", "/mcp", "/mcp/*", "/health", "/api/*", "/files/*"]
+  },
+  // Inter-Bold.ttf is bundled for the resvg SVG→PNG compositor
+  // (Image_generate); .wasm imports are handled natively by wrangler.
+  "rules": [
+    { "type": "Data", "globs": ["**/*.ttf"], "fallthrough": true }
+  ],
+  "durable_objects": {
+    "bindings": [
+      {
+        // One SQLite-backed DO instance per chat, named by chatId. The Agents
+        // SDK routes /agents/chat-agent/<name> to this binding (kebab-case).
+        "name": "ChatAgent",
+        "class_name": "ChatAgent"
+      },
+      {
+        // Per-company asset index (Get_company_assets), one instance per
+        // domain; the bytes live in the ASSETS_BUCKET R2 bucket.
+        "name": "CompanyAssets",
+        "class_name": "CompanyAssets"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1_chat_agent",
+      "new_sqlite_classes": ["ChatAgent"]
+    },
+    {
+      "tag": "v2_company_assets",
+      "new_sqlite_classes": ["CompanyAssets"]
+    }
+  ],
+  "r2_buckets": [
+    {
+      // Scraped company assets, scraped profile photos, and generated flat
+      // designs — served back through GET /assets/<key>.
+      "binding": "ASSETS_BUCKET",
+      "bucket_name": "hackathon-agent-assets"
+    }
+  ],
+  "d1_databases": [
+    {
+      // Recruit pipeline state: names, LinkedIn URLs, R2 image links,
+      // Printify product/mockup links, and scraped enrichment JSON.
+      // Edit_recruits / View_recruits interface with it in bulk.
+      "binding": "RECRUITS_DB",
+      "database_name": "hackathon-recruits",
+      "database_id": "b9aba7cf-03f0-43a1-8440-952e226ae882",
+      "migrations_dir": "migrations"
+    }
+  ],
+  "vars": {
+    // AkashML is OpenAI-compatible; the chat agent talks to it through
+    // @ai-sdk/openai-compatible. AKASHML_API_KEY lives in .dev.vars locally
+    // (and `wrangler secret put AKASHML_API_KEY` once deployed).
+    "AKASHML_BASE_URL": "https://api.akashml.com/v1",
+    // Qwen3.6 35B: tool calling + vision + reasoning on AkashML.
+    "AKASHML_MODEL": "Qwen/Qwen3.6-35B-A3B",
+    // Qwen3.6-35B-A3B context window; drives the header meter and budgeting.
+    "MODEL_CONTEXT_TOKENS": "262144",
+    // Main agent and subagents compact their history once the projected
+    // prompt crosses this many tokens.
+    "COMPACTION_THRESHOLD_TOKENS": "150000",
+    // Absolute origin for R2-backed /assets/ URLs handed to tools and
+    // Printify. Local dev overrides this in .dev.vars.
+    "PUBLIC_BASE_URL": "https://hackathon-agent.maxzhang67.workers.dev"
+  }
+}
