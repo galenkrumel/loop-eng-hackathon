@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Jersey Studio</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --ink: #12161c;
+      --paper: #e8edf2;
+      --field: #1a222d;
+      --line: rgba(232, 237, 242, 0.14);
+      --accent: #e85d04;
+      --accent-soft: rgba(232, 93, 4, 0.18);
+      --muted: rgba(232, 237, 242, 0.62);
+      --ok: #3dd68c;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      min-height: 100vh;
+      color: var(--paper);
+      font-family: "DM Sans", system-ui, sans-serif;
+      background:
+        radial-gradient(ellipse 80% 50% at 10% 0%, rgba(232, 93, 4, 0.22), transparent 55%),
+        radial-gradient(ellipse 60% 45% at 90% 10%, rgba(61, 214, 140, 0.1), transparent 50%),
+        linear-gradient(165deg, #0b0e13 0%, #151b24 50%, #0f1319 100%);
+    }
+
+    .wrap {
+      width: min(920px, 92vw);
+      margin: 0 auto;
+      padding: clamp(2rem, 5vw, 3.5rem) 0 4rem;
+    }
+
+    header {
+      margin-bottom: 2.25rem;
+    }
+
+    .brand {
+      font-family: "Bebas Neue", sans-serif;
+      font-size: clamp(2.8rem, 9vw, 4.6rem);
+      letter-spacing: 0.04em;
+      line-height: 0.95;
+    }
+
+    .brand span { color: var(--accent); }
+
+    .lede {
+      margin-top: 0.75rem;
+      max-width: 34rem;
+      color: var(--muted);
+      font-size: 1.05rem;
+      line-height: 1.5;
+    }
+
+    form {
+      display: grid;
+      gap: 1.1rem;
+      padding: 1.4rem 0 0;
+      border-top: 1px solid var(--line);
+    }
+
+    label {
+      display: grid;
+      gap: 0.4rem;
+      font-size: 0.78rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+
+    input[type="text"],
+    input[type="file"] {
+      width: 100%;
+      border: 1px solid var(--line);
+      background: var(--field);
+      color: var(--paper);
+      border-radius: 10px;
+      padding: 0.85rem 1rem;
+      font: inherit;
+      font-size: 1rem;
+      letter-spacing: normal;
+      text-transform: none;
+      font-weight: 400;
+    }
+
+    input[type="file"] {
+      padding: 0.7rem 0.85rem;
+    }
+
+    input:focus {
+      outline: 2px solid var(--accent);
+      outline-offset: 1px;
+    }
+
+    .row {
+      display: grid;
+      gap: 1.1rem;
+    }
+
+    @media (min-width: 640px) {
+      .row { grid-template-columns: 1fr 1fr; }
+    }
+
+    button {
+      margin-top: 0.35rem;
+      justify-self: start;
+      border: 0;
+      border-radius: 10px;
+      padding: 0.95rem 1.45rem;
+      background: var(--accent);
+      color: #fff;
+      font: inherit;
+      font-weight: 700;
+      letter-spacing: 0.02em;
+      cursor: pointer;
+      transition: transform 0.15s ease, filter 0.15s ease;
+    }
+
+    button:hover:not(:disabled) {
+      transform: translateY(-1px);
+      filter: brightness(1.08);
+    }
+
+    button:disabled {
+      opacity: 0.55;
+      cursor: wait;
+    }
+
+    .status {
+      min-height: 1.4rem;
+      margin-top: 0.85rem;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    .status.error { color: #ff7b72; }
+    .status.ok { color: var(--ok); }
+
+    .results {
+      display: none;
+      margin-top: 2.2rem;
+      padding-top: 1.6rem;
+      border-top: 1px solid var(--line);
+      gap: 1.4rem;
+    }
+
+    .results.show { display: grid; }
+
+    .results.primary.show { grid-template-columns: 1fr; }
+
+    @media (min-width: 720px) {
+      .results.primary.show { grid-template-columns: 1fr 1fr; }
+    }
+
+    .results.layers.show {
+      margin-top: 1.2rem;
+      padding-top: 1.2rem;
+      grid-template-columns: 1fr 1fr;
+    }
+
+    @media (min-width: 720px) {
+      .results.layers.show { grid-template-columns: repeat(4, 1fr); }
+    }
+
+    .section-label {
+      display: none;
+      margin-top: 1.8rem;
+      font-family: "Bebas Neue", sans-serif;
+      font-size: 1.2rem;
+      letter-spacing: 0.06em;
+      color: var(--muted);
+    }
+
+    .section-label.show { display: block; }
+
+    figure {
+      display: grid;
+      gap: 0.75rem;
+    }
+
+    figcaption {
+      font-family: "Bebas Neue", sans-serif;
+      font-size: 1.35rem;
+      letter-spacing: 0.05em;
+    }
+
+    figure img {
+      width: 100%;
+      aspect-ratio: 1;
+      object-fit: contain;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background:
+        linear-gradient(45deg, #1a222d 25%, transparent 25%),
+        linear-gradient(-45deg, #1a222d 25%, transparent 25%),
+        linear-gradient(45deg, transparent 75%, #1a222d 75%),
+        linear-gradient(-45deg, transparent 75%, #1a222d 75%);
+      background-size: 16px 16px;
+      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+      background-color: #121820;
+    }
+
+    .dl {
+      display: inline-flex;
+      align-items: center;
+      gap: 0.4rem;
+      color: var(--paper);
+      text-decoration: none;
+      font-weight: 600;
+      font-size: 0.92rem;
+      padding: 0.45rem 0.75rem;
+      border-radius: 8px;
+      background: var(--accent-soft);
+      border: 1px solid rgba(232, 93, 4, 0.35);
+      width: fit-content;
+    }
+
+    .dl:hover { filter: brightness(1.15); }
+
+    .printify {
+      display: none;
+      margin-top: 1.6rem;
+      padding: 1rem 1.15rem;
+      border-radius: 12px;
+      border: 1px solid var(--line);
+      background: rgba(26, 34, 45, 0.85);
+      gap: 0.45rem;
+    }
+
+    .printify.show { display: grid; }
+
+    .printify h2 {
+      font-family: "Bebas Neue", sans-serif;
+      font-size: 1.35rem;
+      letter-spacing: 0.05em;
+    }
+
+    .printify p {
+      color: var(--muted);
+      font-size: 0.95rem;
+      line-height: 1.45;
+    }
+
+    .printify a {
+      color: var(--accent);
+      font-weight: 700;
+      text-decoration: none;
+      width: fit-content;
+    }
+
+    .printify a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1 class="brand">Jersey <span>Studio</span></h1>
+      <p class="lede">
+        Enter a company, a candidate name, and a photo. Get print-ready jersey
+        layers for Printify, a style mockup, and a try-on of the person wearing it.
+      </p>
+    </header>
+
+    <form id="form">
+      <div class="row">
+        <label>
+          Company name
+          <input type="text" name="company_name" required placeholder="Acme Robotics" autocomplete="organization" />
+        </label>
+        <label>
+          Candidate name
+          <input type="text" name="candidate_name" required placeholder="Jordan Lee" autocomplete="name" />
+        </label>
+      </div>
+      <label>
+        Candidate photo
+        <input type="file" name="photo" accept="image/*" required />
+      </label>
+      <button type="submit" id="submit">Generate jersey</button>
+    </form>
+
+    <p class="status" id="status" aria-live="polite"></p>
+
+    <p class="section-label" id="previewLabel">Preview</p>
+    <section class="results primary" id="results">
+      <figure>
+        <figcaption>Style mockup</figcaption>
+        <img id="jerseyImg" alt="Generated jersey style mockup" />
+        <a class="dl" id="jerseyDl" download="jersey.png">Download PNG</a>
+      </figure>
+      <figure>
+        <figcaption>Wearing jersey</figcaption>
+        <img id="tryonImg" alt="Candidate wearing jersey" />
+        <a class="dl" id="tryonDl" download="tryon.png">Download PNG</a>
+      </figure>
+    </section>
+
+    <p class="section-label" id="layersLabel">Printify print layers</p>
+    <section class="results layers" id="layerResults">
+      <figure>
+        <figcaption>Front</figcaption>
+        <img id="frontImg" alt="Front print layer" />
+        <a class="dl" id="frontDl" download="front.png">Download</a>
+      </figure>
+      <figure>
+        <figcaption>Back</figcaption>
+        <img id="backImg" alt="Back print layer" />
+        <a class="dl" id="backDl" download="back.png">Download</a>
+      </figure>
+      <figure>
+        <figcaption>Sleeve</figcaption>
+        <img id="sleeveImg" alt="Sleeve print layer" />
+        <a class="dl" id="sleeveDl" download="sleeve.png">Download</a>
+      </figure>
+      <figure>
+        <figcaption>Neck</figcaption>
+        <img id="neckImg" alt="Neck print layer" />
+        <a class="dl" id="neckDl" download="neck.png">Download</a>
+      </figure>
+    </section>
+
+    <aside class="printify" id="printifyBox">
+      <h2>Printify draft</h2>
+      <p id="printifyMsg"></p>
+      <a id="printifyLink" href="#" target="_blank" rel="noopener" hidden>Open in Printify</a>
+    </aside>
+  </div>
+
+  <script>
+    const form = document.getElementById("form");
+    const statusEl = document.getElementById("status");
+    const submitBtn = document.getElementById("submit");
+    const results = document.getElementById("results");
+    const layerResults = document.getElementById("layerResults");
+    const previewLabel = document.getElementById("previewLabel");
+    const layersLabel = document.getElementById("layersLabel");
+
+    function setLayer(imgId, dlId, dataUrl, filename) {
+      if (!dataUrl) return;
+      document.getElementById(imgId).src = dataUrl;
+      const dl = document.getElementById(dlId);
+      dl.href = dataUrl;
+      dl.download = filename || "layer.png";
+    }
+
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      results.classList.remove("show");
+      layerResults.classList.remove("show");
+      previewLabel.classList.remove("show");
+      layersLabel.classList.remove("show");
+      document.getElementById("printifyBox").classList.remove("show");
+      statusEl.className = "status";
+      statusEl.textContent =
+        "Generating… usually a few minutes (print layers, style mockup, try-on, then Printify). Watch the terminal for step logs.";
+      submitBtn.disabled = true;
+
+      try {
+        const body = new FormData(form);
+        const res = await fetch("/generate", { method: "POST", body });
+        const data = await res.json().catch(() => ({}));
+
+        if (!res.ok) {
+          const detail = data.detail || res.statusText || "Generation failed";
+          throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
+        }
+
+        document.getElementById("jerseyImg").src = data.jersey_png;
+        document.getElementById("tryonImg").src = data.tryon_png;
+
+        const jerseyDl = document.getElementById("jerseyDl");
+        const tryonDl = document.getElementById("tryonDl");
+        jerseyDl.href = data.jersey_png;
+        tryonDl.href = data.tryon_png;
+        jerseyDl.download = data.jersey_filename || "jersey.png";
+        tryonDl.download = data.tryon_filename || "tryon.png";
+
+        const layers = data.layers || {};
+        setLayer("frontImg", "frontDl", layers.front_png, layers.front_filename);
+        setLayer("backImg", "backDl", layers.back_png, layers.back_filename);
+        setLayer("sleeveImg", "sleeveDl", layers.sleeve_png, layers.sleeve_filename);
+        setLayer("neckImg", "neckDl", layers.neck_png, layers.neck_filename);
+
+        previewLabel.classList.add("show");
+        results.classList.add("show");
+        if (layers.front_png) {
+          layersLabel.classList.add("show");
+          layerResults.classList.add("show");
+        }
+        statusEl.className = "status ok";
+        statusEl.textContent = "Done — download the PNGs below.";
+
+        const printifyBox = document.getElementById("printifyBox");
+        const printifyMsg = document.getElementById("printifyMsg");
+        const printifyLink = document.getElementById("printifyLink");
+        printifyBox.classList.add("show");
+        if (data.printify) {
+          const positions = (data.printify.positions || []).join(", ") || "front";
+          const color = data.printify.shirt_color || data.shirt_color || "unknown";
+          printifyMsg.textContent =
+            `Draft product “${data.printify.title}” created (${data.printify.variant_count} variants; color: ${color}; positions: ${positions}). Ready for future ordering.`;
+          printifyLink.hidden = false;
+          printifyLink.href = data.printify.dashboard_url;
+        } else {
+          printifyLink.hidden = true;
+          printifyMsg.textContent =
+            data.printify_error || "Printify draft was not created.";
+        }
+        if (data.shirt_color) {
+          statusEl.textContent =
+            `Done — shirt color ${data.shirt_color}. Download the PNGs below.`;
+        }
+      } catch (err) {
+        statusEl.className = "status error";
+        statusEl.textContent = err.message || String(err);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+  </script>
+</body>
+</html>

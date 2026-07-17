@@ -1,0 +1,11 @@
+.env
+**/.env
+**/__pycache__/
+**/*.pyc
+jersey-app/outputs/
+.venv/
+venv/
+jersey-app/.venv/
+
+.DS_Store
+**/.DS_Store
