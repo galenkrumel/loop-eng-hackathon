@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet data-dc-atomics>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+ body{margin:0;background:#efe6d8;font-family:'Nunito',system-ui,sans-serif}
+ a{color:oklch(0.60 0.13 40);text-decoration:none}
+ a:hover{color:oklch(0.52 0.14 40)}
+ @keyframes so-pop{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</helmet>
+<div style="min-height:100vh;display:flex;justify-content:center;align-items:flex-start;padding:40px 24px;">
+<div style="width:1180px;max-width:100%;background:#f7f1e7;border-radius:22px;overflow:hidden;box-shadow:0 24px 60px rgba(80,50,25,.14);border:1px solid #ece0d0;color:#3a2f28;">
+  <div style="display:flex;align-items:center;justify-content:space-between;padding:16px 26px;background:#fffaf2;border-bottom:1px solid #ece0d0;">
+    <div style="display:flex;align-items:center;gap:11px;">
+      <div style="width:32px;height:32px;border-radius:10px;background:oklch(0.68 0.14 40);display:flex;align-items:center;justify-content:center;color:#fff;font-family:'Bricolage Grotesque';font-weight:800;font-size:18px;">◎</div>
+      <div style="font-family:'Bricolage Grotesque';font-weight:700;font-size:19px;letter-spacing:-.3px;">Sendoff</div>
+      <div style="font-size:12px;color:#ab9884;padding-left:2px;">Swag Studio</div>
+    </div>
+    <div style="display:flex;align-items:center;gap:10px;font-size:13px;font-weight:700;color:#7a6a5c;">
+      <span>Ava · Recruiting</span>
+      <div style="width:32px;height:32px;border-radius:50%;background:linear-gradient(135deg,#f0d9bf,#e6bfa0);"></div>
+    </div>
+  </div>
+
+  <div style="display:grid;grid-template-columns:400px 1fr;">
+    <!-- ============ LEFT: FORM ============ -->
+    <div style="padding:28px;display:flex;flex-direction:column;gap:18px;border-right:1px solid #ece0d0;">
+      <div>
+        <div style="font-family:'Bricolage Grotesque';font-weight:700;font-size:24px;letter-spacing:-.4px;">New swag gift</div>
+        <div style="font-size:13.5px;color:#8a7869;margin-top:3px;">Upload your shortlist — we design a keepsake for each candidate.</div>
+      </div>
+
+      <!-- CANDIDATE UPLOAD -->
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <span style="font:800 10.5px 'Nunito';letter-spacing:.7px;text-transform:uppercase;color:#7a6a5c;">Candidates · CSV or Excel</span>
+
+        <sc-if value="{{ noFile }}" hint-placeholder-val="{{ false }}">
+          <label onDrop="{{ onDrop }}" onDragOver="{{ onDragOver }}" onDragLeave="{{ onDragLeave }}" style="{{ dropStyle }}">
+            <input type="file" accept=".csv,.xlsx,.xls" onChange="{{ onFileInput }}" style="display:none">
+            <div style="width:42px;height:42px;border-radius:12px;background:#f4e7d6;display:flex;align-items:center;justify-content:center;font-size:20px;">⬆</div>
+            <div style="font-family:'Bricolage Grotesque';font-weight:700;font-size:15px;color:#5b4a3d;">Drop your file here</div>
+            <div style="font-size:12.5px;color:#a3927f;font-weight:600;">or <span style="color:oklch(0.62 0.14 40);text-decoration:underline;">browse</span> · .csv, .xlsx, .xls</div>
+          </label>
+        </sc-if>
+
+        <sc-if value="{{ hasFile }}" hint-placeholder-val="{{ true }}">
+          <div style="display:flex;flex-direction:column;gap:10px;">
+            <div style="display:flex;align-items:center;gap:11px;background:#fff;border:1.5px solid #e3d4c1;border-radius:13px;padding:11px 13px;">
+              <div style="width:34px;height:34px;flex:none;border-radius:9px;background:#eaf5ee;display:flex;align-items:center;justify-content:center;font-size:16px;">📄</div>
+              <div style="flex:1;min-width:0;">
+                <div style="font-weight:800;font-size:13px;color:#4a3b2f;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">{{ fileName }}</div>
+                <div style="font-size:11.5px;color:#9a8674;font-weight:700;">{{ candidateCount }} candidates loaded</div>
+              </div>
+              <button onClick="{{ onReplace }}" style="border:none;background:#f4ece0;color:#8a6f57;border-radius:9px;padding:7px 11px;font:800 12px 'Nunito';cursor:pointer;">Replace</button>
+            </div>
+            <label style="display:flex;flex-direction:column;gap:6px;">
+              <span style="font:800 10px 'Nunito';letter-spacing:.6px;text-transform:uppercase;color:#9a8674;">Previewing</span>
+              <select value="{{ selectedIdxStr }}" onChange="{{ onSelectCandidate }}" style="appearance:none;border:1.5px solid #e3d4c1;background:#fff;border-radius:12px;padding:11px 13px;font:800 14px 'Nunito';color:#3a2f28;cursor:pointer;">
+                <sc-for list="{{ candidates }}" as="c" hint-placeholder-count="3">
+                  <option value="{{ $index }}">{{ c.first }} {{ c.last }}</option>
+                </sc-for>
+              </select>
+            </label>
+          </div>
+        </sc-if>
+
+        <div style="font-size:11px;color:#b0a08e;font-weight:700;line-height:1.5;">Column order: <span style="color:#8a7869;">first_name · last_name · linkedin URL</span></div>
+      </div>
+
+      <label style="display:flex;flex-direction:column;gap:6px;">
+        <span style="font:800 10.5px 'Nunito';letter-spacing:.7px;text-transform:uppercase;color:#7a6a5c;">Company</span>
+        <input value="{{ company }}" onChange="{{ onCompany }}" style-focus="border-color:oklch(0.68 0.14 40)" style="border:1.5px solid #e3d4c1;background:#fff;border-radius:12px;padding:11px 13px;font:600 14px 'Nunito';color:#3a2f28;outline:none;">
+      </label>
+
+      <label style="display:flex;flex-direction:column;gap:6px;">
+        <span style="font:800 10.5px 'Nunito';letter-spacing:.7px;text-transform:uppercase;color:#7a6a5c;">Design prompt</span>
+        <textarea rows="3" value="{{ prompt }}" onChange="{{ onPrompt }}" style-focus="border-color:oklch(0.68 0.14 40)" style="border:1.5px solid #e3d4c1;background:#fff;border-radius:12px;padding:11px 13px;font:600 14px 'Nunito';color:#3a2f28;resize:none;line-height:1.5;outline:none;"></textarea>
+      </label>
+
+      <div style="display:flex;flex-direction:column;gap:8px;">
+        <span style="font:800 10.5px 'Nunito';letter-spacing:.7px;text-transform:uppercase;color:#7a6a5c;">Product</span>
+        <div style="display:flex;gap:9px;">
+          <sc-for list="{{ pills }}" as="p" hint-placeholder-count="3">
+            <button onClick="{{ p.onClick }}" style="{{ p.style }}">{{ p.emoji }}<span>{{ p.label }}</span></button>
+          </sc-for>
+        </div>
+      </div>
+
+      <button onClick="{{ onGenerate }}" style="margin-top:4px;border:none;cursor:pointer;background:oklch(0.68 0.14 40);color:#fff;border-radius:13px;padding:14px;font:800 15px 'Nunito';box-shadow:0 8px 18px rgba(190,90,50,.3);display:flex;align-items:center;justify-content:center;gap:8px;">✨ Generate design</button>
+    </div>
+
+    <!-- ============ RIGHT: PREVIEW ============ -->
+    <div style="padding:26px;background:radial-gradient(130% 90% at 60% 10%,#fffdf8,#f1e5d2);display:flex;flex-direction:column;gap:16px;position:relative;">
+      <div style="display:flex;align-items:center;justify-content:space-between;">
+        <div style="display:flex;align-items:center;gap:8px;font-weight:800;font-size:13px;color:#5f9e6e;"><span style="width:9px;height:9px;border-radius:50%;background:#5f9e6e;display:inline-block;"></span>Design ready for {{ currentFirst }}</div>
+        <div style="font-size:12px;color:#a3927f;font-weight:700;">{{ productLabel }}</div>
+      </div>
+
+      <div style="flex:1;min-height:300px;border-radius:18px;background:radial-gradient(120% 90% at 50% 18%,#fff8ee,#f2e6d3);border:1px solid #ece0d0;display:flex;align-items:center;justify-content:center;position:relative;overflow:hidden;">
+        <div style="position:absolute;top:14px;left:14px;font:700 10px 'Nunito';letter-spacing:1px;color:#c3b3a0;text-transform:uppercase;">Model render</div>
+
+        <sc-if value="{{ isMug }}" hint-placeholder-val="{{ true }}">
+          <div style="position:relative;width:310px;height:250px;">
+            <div style="position:absolute;right:22px;top:66px;width:82px;height:112px;border:24px solid #e9edf1;border-radius:50%;"></div>
+            <div style="position:absolute;left:44px;top:38px;width:200px;height:192px;border-radius:16px 16px 22px 22px;background:linear-gradient(90deg,#cbcfd4,#f8fafb 22%,#ffffff 50%,#eef1f4 78%,#c6cacf);box-shadow:inset 0 -12px 22px rgba(0,0,0,.06);"></div>
+            <div style="position:absolute;left:44px;top:29px;width:200px;height:28px;border-radius:50%;background:#dfe3e7;box-shadow:inset 0 3px 6px rgba(0,0,0,.14);"></div>
+            <div style="position:absolute;left:57px;top:33px;width:174px;height:18px;border-radius:50%;background:#bcc1c7;"></div>
+            <div style="position:absolute;left:50%;top:120px;transform:translate(-50%,-50%) scaleX(.92);-webkit-mask:linear-gradient(90deg,transparent,#000 16%,#000 84%,transparent);mask:linear-gradient(90deg,transparent,#000 16%,#000 84%,transparent);">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:5px;">
+                <div style="position:relative;width:108px;height:58px;">
+                  <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:27px;height:27px;border-radius:50%;background:#e8a53c;"></div>
+                  <div style="position:absolute;left:12px;bottom:0;width:46px;height:40px;background:#6a9a78;clip-path:polygon(50% 0,100% 100%,0 100%);"></div>
+                  <div style="position:absolute;right:8px;bottom:0;width:54px;height:47px;background:#3f6b52;clip-path:polygon(50% 0,100% 100%,0 100%);"></div>
+                </div>
+                <div style="font-family:'Bricolage Grotesque';font-weight:800;font-size:15px;letter-spacing:.4px;color:#33463b;">{{ brandMark }}</div>
+                <div style="font-size:7.5px;letter-spacing:3px;color:#8a9a8f;font-weight:800;">EST · 2026</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isShirt }}" hint-placeholder-val="{{ false }}">
+          <div style="position:relative;width:280px;height:290px;">
+            <div style="position:absolute;inset:0;background:linear-gradient(160deg,#6d4d86,#57386f);clip-path:polygon(38% 4%,30% 8%,3% 20%,9% 40%,26% 31%,24% 97%,76% 97%,74% 31%,91% 40%,97% 20%,70% 8%,62% 4%,50% 13%);box-shadow:inset 0 0 40px rgba(0,0,0,.2);"></div>
+            <div style="position:absolute;left:50%;top:2%;transform:translateX(-50%);width:24%;height:8%;border:5px solid #4a2f61;border-top:none;border-radius:0 0 60% 60%;"></div>
+            <div style="position:absolute;left:50%;top:42%;transform:translate(-50%,-50%);">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:4px;">
+                <div style="position:relative;width:96px;height:52px;">
+                  <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:24px;height:24px;border-radius:50%;background:#e8a53c;"></div>
+                  <div style="position:absolute;left:11px;bottom:0;width:40px;height:35px;background:#9ec6a9;clip-path:polygon(50% 0,100% 100%,0 100%);"></div>
+                  <div style="position:absolute;right:6px;bottom:0;width:47px;height:41px;background:#cfe6d5;clip-path:polygon(50% 0,100% 100%,0 100%);"></div>
+                </div>
+                <div style="font-family:'Bricolage Grotesque';font-weight:800;font-size:14px;letter-spacing:.4px;color:#f4ead9;">{{ brandMark }}</div>
+                <div style="font-size:7px;letter-spacing:3px;color:#cbb9dd;font-weight:800;">EST · 2026</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+
+        <sc-if value="{{ isHat }}" hint-placeholder-val="{{ false }}">
+          <div style="position:relative;width:320px;height:220px;">
+            <div style="position:absolute;left:34px;bottom:20px;width:200px;height:56px;background:linear-gradient(#33523f,#274031);border-radius:0 0 100px 100px / 0 0 56px 56px;transform:rotate(-3deg);box-shadow:0 8px 14px rgba(0,0,0,.25);"></div>
+            <div style="position:absolute;left:62px;top:22px;width:212px;height:142px;border-radius:106px 106px 26px 26px;background:linear-gradient(100deg,#2f4a39,#3f6650 45%,#4a7259 55%,#2c4635);box-shadow:inset 0 -10px 20px rgba(0,0,0,.25);"></div>
+            <div style="position:absolute;left:163px;top:16px;width:10px;height:10px;border-radius:50%;background:#274031;"></div>
+            <div style="position:absolute;left:50%;top:96px;transform:translate(-40%,-50%) scaleX(.94);-webkit-mask:linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent);mask:linear-gradient(90deg,transparent,#000 18%,#000 82%,transparent);">
+              <div style="display:flex;flex-direction:column;align-items:center;gap:3px;">
+                <div style="position:relative;width:78px;height:42px;">
+                  <div style="position:absolute;left:50%;top:0;transform:translateX(-50%);width:20px;height:20px;border-radius:50%;background:#e8a53c;"></div>
+                  <div style="position:absolute;left:8px;bottom:0;width:34px;height:29px;background:#8fbf9c;clip-path:polygon(50% 0,100% 100%,0 100%);"></div>
+                  <div style="position:absolute;right:5px;bottom:0;width:40px;height:34px;background:#c9e4d1;clip-path:polygon(50% 0,100% 100%,0 100%);"></div>
+                </div>
+                <div style="font-family:'Bricolage Grotesque';font-weight:800;font-size:12px;letter-spacing:.5px;color:#f2ead9;">{{ brandMark }}</div>
+              </div>
+            </div>
+          </div>
+        </sc-if>
+      </div>
+
+      <div style="display:flex;gap:14px;align-items:stretch;">
+        <div style="width:150px;flex:none;background:#fff;border:1px solid #ece0d0;border-radius:14px;padding:10px 10px 12px;transform:rotate(-3deg);box-shadow:0 10px 24px rgba(80,50,25,.12);">
+          <div style="height:120px;border-radius:8px;background:repeating-linear-gradient(45deg,#efe4d5,#efe4d5 9px,#e7d9c6 9px,#e7d9c6 18px);display:flex;align-items:center;justify-content:center;text-align:center;">
+            <span style="font:700 8.5px ui-monospace,monospace;color:#a8967f;padding:0 8px;">candidate photo<br>model output</span>
+          </div>
+          <div style="font-family:'Bricolage Grotesque';font-weight:700;font-size:12px;margin-top:8px;color:#5b4a3d;">{{ currentFirst }}'s {{ productNoun }} {{ productEmoji }}</div>
+          <a href="{{ currentLinkedin }}" target="_blank" style="display:block;font-size:10px;font-weight:800;margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">in/{{ currentHandle }} ↗</a>
+        </div>
+        <div style="flex:1;display:flex;flex-direction:column;gap:10px;">
+          <a href="https://printify.com" target="_blank" style="display:flex;align-items:center;justify-content:space-between;background:#eaf5ee;border:1.5px solid #cfe7d8;border-radius:13px;padding:12px 14px;">
+            <span style="display:flex;align-items:center;gap:9px;font-weight:800;font-size:13.5px;color:#2f7a52;"><span style="width:22px;height:22px;border-radius:6px;background:#2f7a52;color:#fff;display:flex;align-items:center;justify-content:center;font-size:12px;">P</span>Pushed to Printify</span>
+            <span style="font-weight:800;font-size:12.5px;color:#2f7a52;">Open ↗</span>
+          </a>
+          <div style="display:flex;gap:10px;">
+            <button onClick="{{ onDownload }}" style="flex:1;border:1.5px solid #e3d4c1;background:#fff;color:#5b4a3d;border-radius:13px;padding:13px;font:800 13.5px 'Nunito';cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;">⬇ Download</button>
+            <button onClick="{{ onSend }}" style="flex:1;border:none;background:#2a221c;color:#fff;border-radius:13px;padding:13px;font:800 13.5px 'Nunito';cursor:pointer;display:flex;align-items:center;justify-content:center;gap:7px;">✉ Send email</button>
+          </div>
+        </div>
+      </div>
+
+      <sc-if value="{{ toast }}" hint-placeholder-val="{{ false }}">
+        <div style="position:absolute;bottom:20px;left:50%;transform:translateX(-50%);background:#2a221c;color:#fff;padding:11px 18px;border-radius:12px;font:800 13px 'Nunito';box-shadow:0 12px 28px rgba(0,0,0,.25);animation:so-pop .25s ease;">{{ toast }}</div>
+      </sc-if>
+    </div>
+  </div>
+</div>
+</div>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  state = {
+    candidates: [
+      { first: 'Maya', last: 'Chen', linkedin: 'https://linkedin.com/in/mayachen' },
+      { first: 'Devon', last: 'Okafor', linkedin: 'https://linkedin.com/in/devonokafor' },
+      { first: 'Priya', last: 'Nair', linkedin: 'https://linkedin.com/in/priyanair' }
+    ],
+    fileName: 'northwind_candidates.csv',
+    showDrop: false,
+    dragOver: false,
+    selectedIdx: 0,
+    product: 'mug',
+    company: 'Northwind Labs',
+    prompt: 'Cozy sunrise over pine mountains with a little fox — warm retro palette.',
+    toast: ''
+  };
+
+  parseCSV(text) {
+    return text.split(/\r?\n/).filter(l => l.trim()).map(line => {
+      const out = []; let cur = ''; let q = false;
+      for (let i = 0; i < line.length; i++) {
+        const c = line[i];
+        if (c === '"') { q = !q; continue; }
+        if (c === ',' && !q) { out.push(cur); cur = ''; continue; }
+        cur += c;
+      }
+      out.push(cur);
+      return out.map(s => s.trim());
+    });
+  }
+
+  rowsToCandidates(rows) {
+    const out = [];
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i]; if (!r) continue;
+      const first = (r[0] == null ? '' : String(r[0])).trim();
+      const last = (r[1] == null ? '' : String(r[1])).trim();
+      const linkedin = (r[2] == null ? '' : String(r[2])).trim();
+      if (i === 0 && /first[_ ]?name/i.test(first)) continue;
+      if (!first && !last) continue;
+      out.push({ first, last, linkedin });
+    }
+    return out;
+  }
+
+  async handleFile(file) {
+    if (!file) return;
+    try {
+      const name = file.name.toLowerCase();
+      let rows = [];
+      if (name.endsWith('.csv')) {
+        rows = this.parseCSV(await file.text());
+      } else if (window.XLSX) {
+        const wb = window.XLSX.read(await file.arrayBuffer(), { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        rows = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+      } else {
+        this.flash('Excel support still loading — try again'); return;
+      }
+      const cands = this.rowsToCandidates(rows);
+      if (!cands.length) { this.flash('No candidates found — check the columns'); return; }
+      this.setState({ candidates: cands, fileName: file.name, showDrop: false, selectedIdx: 0, dragOver: false });
+    } catch (e) {
+      this.flash('Could not read that file');
+    }
+  }
+
+  flash(msg) {
+    this.setState({ toast: msg });
+    clearTimeout(this._t);
+    this._t = setTimeout(() => this.setState({ toast: '' }), 2600);
+  }
+
+  renderVals() {
+    const s = this.state;
+    const cand = s.candidates[s.selectedIdx] || { first: 'your candidate', last: '', linkedin: '' };
+    const nouns = { mug: 'mug', shirt: 'tee', hat: 'cap' };
+    const emojis = { mug: '☕', shirt: '👕', hat: '🧢' };
+    const labels = { mug: 'Ceramic mug · 11oz', shirt: 'Unisex tee · soft cotton', hat: 'Snapback · structured' };
+    const pillBase = 'flex:1;display:flex;flex-direction:column;align-items:center;gap:5px;padding:12px 6px;border-radius:13px;font-weight:800;font-size:12.5px;cursor:pointer;';
+    const mk = (key, label, emoji) => ({
+      key, label, emoji,
+      onClick: () => this.setState({ product: key }),
+      style: s.product === key
+        ? pillBase + 'background:oklch(0.68 0.14 40);color:#fff;border:1.5px solid transparent;box-shadow:0 6px 14px rgba(190,90,50,.28);'
+        : pillBase + 'background:#fff;border:1.5px solid #e3d4c1;color:#8a7869;'
+    });
+    const handle = (cand.linkedin || '').replace(/\/+$/, '').split('/').pop() || (cand.first + cand.last).toLowerCase();
+
+    return {
+      hasFile: !s.showDrop && s.candidates.length > 0,
+      noFile: s.showDrop || s.candidates.length === 0,
+      fileName: s.fileName || 'candidates.csv',
+      candidateCount: s.candidates.length,
+      candidates: s.candidates,
+      selectedIdxStr: String(s.selectedIdx),
+      company: s.company,
+      prompt: s.prompt,
+      brandMark: (s.company.trim().split(/\s+/)[0] || 'BRAND').toUpperCase(),
+      currentFirst: cand.first,
+      currentLinkedin: cand.linkedin || '#',
+      currentHandle: handle,
+      productNoun: nouns[s.product],
+      productEmoji: emojis[s.product],
+      productLabel: labels[s.product],
+      isMug: s.product === 'mug',
+      isShirt: s.product === 'shirt',
+      isHat: s.product === 'hat',
+      pills: [mk('mug', 'Mug', '☕'), mk('shirt', 'Shirt', '👕'), mk('hat', 'Hat', '🧢')],
+      toast: s.toast,
+      dropStyle: 'display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;text-align:center;padding:26px 18px;border-radius:15px;cursor:pointer;transition:.15s;border:2px dashed ' +
+        (s.dragOver ? 'oklch(0.68 0.14 40);background:#faf0e4;' : '#dcc9b2;background:#fbf6ee;'),
+      onFileInput: (e) => { this.handleFile(e.target.files && e.target.files[0]); },
+      onDrop: (e) => { e.preventDefault(); this.setState({ dragOver: false }); this.handleFile(e.dataTransfer.files && e.dataTransfer.files[0]); },
+      onDragOver: (e) => { e.preventDefault(); if (!this.state.dragOver) this.setState({ dragOver: true }); },
+      onDragLeave: (e) => { e.preventDefault(); this.setState({ dragOver: false }); },
+      onReplace: () => this.setState({ showDrop: true }),
+      onSelectCandidate: (e) => this.setState({ selectedIdx: parseInt(e.target.value, 10) || 0 }),
+      onCompany: (e) => this.setState({ company: e.target.value }),
+      onPrompt: (e) => this.setState({ prompt: e.target.value }),
+      onGenerate: () => this.flash('Generating designs for ' + s.candidates.length + ' candidates…'),
+      onDownload: () => this.flash('Downloaded ' + cand.first + '\u2019s ' + nouns[s.product] + ' image ✓'),
+      onSend: () => this.flash('Emailed to ' + cand.first + ' ✓')
+    };
+  }
+}
+</script>
+</body>
+</html>
