@@ -11,9 +11,57 @@ import httpx
 OPENROUTER_IMAGES_URL = "https://openrouter.ai/api/v1/images"
 MODEL = "openai/gpt-image-2"
 
+# openai/gpt-image-2 aspect_ratio enum (OpenRouter Zod schema).
+_ALLOWED_ASPECT_RATIOS = frozenset(
+    {
+        "1:1",
+        "1:2",
+        "1:4",
+        "1:8",
+        "2:1",
+        "2:3",
+        "3:2",
+        "3:4",
+        "4:1",
+        "4:3",
+        "4:5",
+        "5:4",
+        "8:1",
+        "9:16",
+        "16:9",
+        "9:19.5",
+        "19.5:9",
+        "9:20",
+        "20:9",
+        "9:21",
+        "21:9",
+        "auto",
+    }
+)
+# Common aliases → nearest allowed ratio.
+_ASPECT_ALIASES = {
+    "3:1": "2:1",
+    "5:1": "4:1",
+    "5:2": "2:1",
+    "5:3": "3:2",
+}
+
 
 class OpenRouterImageError(RuntimeError):
     """Raised when the Images API returns an error or unexpected payload."""
+
+
+def _normalize_aspect_ratio(aspect_ratio: str) -> str:
+    value = (aspect_ratio or "1:1").strip()
+    if value in _ALLOWED_ASPECT_RATIOS:
+        return value
+    mapped = _ASPECT_ALIASES.get(value)
+    if mapped:
+        return mapped
+    raise OpenRouterImageError(
+        f"Unsupported aspect_ratio {aspect_ratio!r}; "
+        f"allowed: {', '.join(sorted(_ALLOWED_ASPECT_RATIOS))}"
+    )
 
 
 def _api_key() -> str:
@@ -54,7 +102,7 @@ async def generate_image(
         "prompt": prompt,
         "quality": quality,
         "output_format": output_format,
-        "aspect_ratio": aspect_ratio,
+        "aspect_ratio": _normalize_aspect_ratio(aspect_ratio),
         "n": 1,
     }
     if references:

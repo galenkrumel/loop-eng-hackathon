@@ -42,6 +42,12 @@ def _parse_json_content(content: str) -> dict[str, Any]:
     fence = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fence:
         text = fence.group(1)
+    else:
+        # Models often wrap JSON in prose when JSON mode is off (e.g. with web search).
+        start = text.find("{")
+        end = text.rfind("}")
+        if start != -1 and end > start:
+            text = text[start : end + 1]
     try:
         parsed = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -135,33 +141,42 @@ async def chat_json_multimodal(
 
     ``images`` may be raw PNG/JPEG bytes or data URLs. Text is sent before images
     (OpenRouter recommendation).
+
+    Note: OpenAI/Azure reject JSON mode combined with web search, so when
+    ``enable_web_search`` is True we omit ``response_format`` and parse JSON
+    from free-form text instead.
     """
     resolved = model or os.getenv("DESIGN_CRITIC_MODEL", "").strip() or CRITIC_MODEL
     model_id = _with_online(resolved, enable_web_search)
 
-    content: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
-    for image in images:
-        content.append(
-            {
-                "type": "image_url",
-                "image_url": {
-                    "url": _to_image_data_url(image, media_type=media_type),
-                },
-            }
-        )
+    if images:
+        parts: list[dict[str, Any]] = [{"type": "text", "text": user_text}]
+        for image in images:
+            parts.append(
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": _to_image_data_url(image, media_type=media_type),
+                    },
+                }
+            )
+        user_content: str | list[dict[str, Any]] = parts
+    else:
+        user_content = user_text
 
     payload: dict[str, Any] = {
         "model": model_id,
         "temperature": 0.2,
-        "response_format": {"type": "json_object"},
         "messages": [
             {"role": "system", "content": system},
-            {"role": "user", "content": content},
+            {"role": "user", "content": user_content},
         ],
     }
+    # Web Search cannot be used with JSON mode (OpenAI/Azure 400).
     if enable_web_search:
-        # Belt-and-suspenders: :online on the model + web plugin.
         payload["plugins"] = [{"id": "web", "max_results": 5}]
+    else:
+        payload["response_format"] = {"type": "json_object"}
 
     async with httpx.AsyncClient(timeout=timeout) as client:
         response = await client.post(
@@ -178,3 +193,21 @@ async def chat_json_multimodal(
 
     message_content = _extract_message_content(result, response.status_code)
     return _parse_json_content(message_content)
+
+
+async def chat_json_web(
+    system: str,
+    user: str,
+    *,
+    model: str | None = None,
+    timeout: float = 90.0,
+) -> dict[str, Any]:
+    """JSON chat with OpenRouter web search (no images)."""
+    return await chat_json_multimodal(
+        system,
+        user,
+        [],
+        model=model or CHAT_MODEL,
+        enable_web_search=True,
+        timeout=timeout,
+    )

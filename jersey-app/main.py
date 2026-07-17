@@ -16,8 +16,16 @@ from fastapi.staticfiles import StaticFiles
 from brand_lookup import (
     BrandProfile,
     brand_prompt_guidance,
+    chromatic_hexes,
     download_preferred_logo,
+    enrich_brand_colors,
     lookup_brand,
+)
+from candidates_file import (
+    Candidate,
+    CandidatesFileError,
+    parse_candidates_file,
+    parse_candidates_text,
 )
 from design_critic import DesignReview, max_review_attempts, review_design
 from openrouter_chat import OpenRouterChatError, chat_json
@@ -53,8 +61,9 @@ app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 FRONT_BACK_ASPECT = "3:4"
 SQUARE_ASPECT = "1:1"
-# Hat front panel ~1500×600; mug wrap ~2475×1155
-WIDE_PANEL_ASPECT = "3:1"
+# Hat front panel ~1500×600 (~2.5:1); mug wrap ~2475×1155 (~2.1:1).
+# OpenRouter gpt-image-2 only allows a fixed aspect_ratio enum (no "3:1").
+WIDE_PANEL_ASPECT = "2:1"
 MUG_WRAP_ASPECT = "2:1"
 
 _DARK_NAME_HINTS = (
@@ -123,11 +132,35 @@ def _shirt_is_dark(blank_color: str, ink_hint: str | None = None) -> bool:
     return any(hint in lower for hint in _DARK_NAME_HINTS)
 
 
-def _ink_guidance(blank_color: str, ink_hint: str | None = None) -> str:
+def _ink_guidance(
+    blank_color: str,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+) -> str:
+    accents = chromatic_hexes(brand.color_hexes) if brand else []
+    accent_bit = (
+        f" Prefer these brand accent hexes as the colorful inks: {', '.join(accents)}."
+        if accents
+        else ""
+    )
     if _shirt_is_dark(blank_color, ink_hint):
+        if accents:
+            return (
+                f"The blank product is {blank_color} (dark / saturated). Use high-contrast "
+                f"ink from the brand palette (plus white for highlights if needed) so the "
+                f"print reads clearly on {blank_color}.{accent_bit} Do not invent gold, "
+                f"brass, or cream metallic accents."
+            )
         return (
             f"The blank product is {blank_color} (dark / saturated). Use light / high-contrast "
-            f"ink (white, cream, bright accents) so the print reads clearly on {blank_color}."
+            f"ink so the print reads clearly on {blank_color}. Prefer real brand colors over "
+            f"invented gold or metallic yellow."
+        )
+    if accents:
+        return (
+            f"The blank product is {blank_color} (light / pale). Use dark / high-contrast ink "
+            f"from the brand palette so the print reads clearly on {blank_color}.{accent_bit}"
         )
     return (
         f"The blank product is {blank_color} (light / pale). Use dark / high-contrast ink "
@@ -135,13 +168,23 @@ def _ink_guidance(blank_color: str, ink_hint: str | None = None) -> str:
     )
 
 
-def _print_art_rules(blank_color: str | None, ink_hint: str | None = None) -> str:
+def _print_art_rules(
+    blank_color: str | None,
+    ink_hint: str | None = None,
+    *,
+    brand: BrandProfile | None = None,
+) -> str:
     contrast = (
-        _ink_guidance(blank_color, ink_hint)
+        _ink_guidance(blank_color, ink_hint, brand=brand)
         if blank_color
         else (
             "Design for a white ceramic mug — use saturated, high-contrast colors that read "
             "clearly on white."
+            + (
+                f" Prefer brand accent hexes: {', '.join(chromatic_hexes(brand.color_hexes))}."
+                if brand and chromatic_hexes(brand.color_hexes)
+                else ""
+            )
         )
     )
     return (
@@ -190,7 +233,7 @@ def front_print_prompt(
         f"style emblem for the center chest."
         f"{_user_brief_block(design_prompt)}"
         f"{_redo_block(redo_instructions)} "
-        f"{_print_art_rules(blank_color, ink_hint)}"
+        f"{_print_art_rules(blank_color, ink_hint, brand=brand)}"
     )
 
 
@@ -204,7 +247,14 @@ def back_print_prompt(
     redo_instructions: str | None = None,
 ) -> str:
     color_bit = ""
-    if brand and brand.color_hexes:
+    accents = chromatic_hexes(brand.color_hexes) if brand else []
+    if accents:
+        color_bit = (
+            f" Prefer lettering colors from the brand palette "
+            f"({', '.join(accents)}) while staying high-contrast on {blank_color}. "
+            f"Do not use gold/metallic yellow unless those hexes are in the palette."
+        )
+    elif brand and brand.color_hexes:
         color_bit = (
             f" Prefer lettering colors that harmonize with brand palette "
             f"({', '.join(brand.color_hexes)}) while staying high-contrast on {blank_color}."
@@ -216,7 +266,7 @@ def back_print_prompt(
         f"{_user_brief_block(design_prompt)}"
         f"{_redo_block(redo_instructions)} "
         f"No shirt body, no number required unless it fits cleanly under the name. "
-        f"{_print_art_rules(blank_color, ink_hint)}"
+        f"{_print_art_rules(blank_color, ink_hint, brand=brand)}"
     )
 
 
@@ -237,7 +287,7 @@ def sleeve_print_prompt(
         f"minimal."
         f"{_user_brief_block(design_prompt)}"
         f"{_redo_block(redo_instructions)} "
-        f"{_print_art_rules(blank_color, ink_hint)}"
+        f"{_print_art_rules(blank_color, ink_hint, brand=brand)}"
     )
 
 
@@ -258,7 +308,7 @@ def neck_print_prompt(
         f"small print size."
         f"{_user_brief_block(design_prompt)}"
         f"{_redo_block(redo_instructions)} "
-        f"{_print_art_rules(blank_color, ink_hint)}"
+        f"{_print_art_rules(blank_color, ink_hint, brand=brand)}"
     )
 
 
@@ -279,7 +329,7 @@ def hat_front_prompt(
         f"front (roughly 2.5:1). Keep it bold and simple for DTF."
         f"{_user_brief_block(design_prompt)}"
         f"{_redo_block(redo_instructions)} "
-        f"{_print_art_rules(blank_color, ink_hint)}"
+        f"{_print_art_rules(blank_color, ink_hint, brand=brand)}"
     )
 
 
@@ -299,7 +349,7 @@ def mug_front_prompt(
         f"brand crest plus candidate name, festive or athletic merch style."
         f"{_user_brief_block(design_prompt)}"
         f"{_redo_block(redo_instructions)} "
-        f"{_print_art_rules(None)}"
+        f"{_print_art_rules(None, brand=brand)}"
     )
 
 
@@ -383,7 +433,10 @@ async def choose_blank_color(
     choices = ", ".join(colors)
     brand_bits = ""
     if brand:
-        if brand.color_hexes:
+        accents = chromatic_hexes(brand.color_hexes)
+        if accents:
+            brand_bits += f"Primary chromatic brand hexes: {', '.join(accents)}.\n"
+        elif brand.color_hexes:
             brand_bits += f"Known brand palette hexes: {', '.join(brand.color_hexes)}.\n"
         if brand.slogan:
             brand_bits += f'Brand slogan: "{brand.slogan}".\n'
@@ -393,7 +446,9 @@ async def choose_blank_color(
         system=(
             f"You are a merch art director. Choose exactly one {product_label} blank color "
             "from the allowed Printify catalog list (copy the string EXACTLY). Prefer a "
-            "color that fits the brand and gives strong contrast for prints. Also say "
+            "color that fits the brand and gives strong contrast for prints. When brand "
+            "hexes are provided, pick a blank that lets those brand colors print clearly "
+            "(often black/navy/white rather than inventing a clash). Also say "
             "whether print ink should be light (for dark/saturated blanks) or dark (for "
             "light/pale blanks). Respond with JSON only."
         ),
@@ -584,71 +639,35 @@ async def _generate_print_and_mockup(
     return front_bytes, back_bytes, sleeve_bytes, neck_bytes, jersey_bytes, front_prompt
 
 
-@app.get("/")
-async def index() -> FileResponse:
-    return FileResponse(STATIC_DIR / "index.html")
 
-
-@app.get("/health")
-async def health() -> dict:
-    return {
-        "ok": True,
-        "app": "jersey-studio",
-        "product_types": sorted(PRODUCT_TYPES),
-    }
-
-
-@app.post("/generate")
-async def generate(
-    company_name: str = Form(...),
-    candidate_name: str = Form(...),
-    photo: UploadFile = File(...),
-    product_type: str = Form("tee"),
-    design_prompt: str = Form(""),
+async def _run_candidate_pipeline(
+    *,
+    company: str,
+    candidate: Candidate,
+    ptype: str,
+    config: dict,
+    brief: str,
+    photo_bytes: bytes,
+    content_type: str,
+    brand: BrandProfile | None,
+    logo_bytes: bytes | None,
+    has_logo_ref: bool,
+    brand_refs: list[dict] | None,
+    blank_color: str | None,
+    ink_hint: str | None,
+    batch_id: str,
+    index: int,
+    total: int,
 ) -> dict:
-    company = company_name.strip()
-    candidate = candidate_name.strip()
-    brief = (design_prompt or "").strip()
-    if not company or not candidate:
-        raise HTTPException(status_code=400, detail="Company and candidate names are required.")
-
-    ptype = _normalize_product_type(product_type)
-    config = get_product_config(ptype)
-
-    photo_bytes = await photo.read()
-    if not photo_bytes:
-        raise HTTPException(status_code=400, detail="Photo is empty.")
-
-    content_type = (photo.content_type or "image/jpeg").split(";")[0].strip()
-    if not content_type.startswith("image/"):
-        raise HTTPException(status_code=400, detail="Upload must be an image.")
-
-    run_id = uuid.uuid4().hex[:10]
-    prefix = f"{_slug(company)}_{_slug(candidate)}_{ptype}_{run_id}"
+    name = candidate.full_name
+    prefix = f"{_slug(company)}_{_slug(name)}_{ptype}_{batch_id}_{index:02d}"
     log.info(
-        "generate start company=%r candidate=%r product=%s run=%s brief=%r",
-        company,
-        candidate,
-        ptype,
-        run_id,
-        brief[:120] if brief else "",
+        "candidate %d/%d start name=%r linkedin=%r",
+        index,
+        total,
+        name,
+        candidate.linkedin_profile_link,
     )
-
-    brand = await lookup_brand(company)
-    logo_ref: dict | None = None
-    logo_bytes: bytes | None = None
-    if brand:
-        logo = await download_preferred_logo(brand)
-        if logo:
-            logo_bytes, logo_media = logo
-            logo_ref = reference_from_bytes(logo_bytes, logo_media)
-    has_logo_ref = logo_ref is not None
-    brand_refs = [logo_ref] if logo_ref else None
-
-    blank_color: str | None = None
-    color_reason = ""
-    ink_hint: str | None = None
-    available_colors: list[str] = []
 
     front_bytes = back_bytes = sleeve_bytes = neck_bytes = b""
     jersey_bytes = tryon_bytes = b""
@@ -657,117 +676,88 @@ async def generate(
     attempts_used = 0
     max_attempts = max_review_attempts()
 
-    try:
-        if config["has_color"]:
-            log.info("step 0/6 loading Printify catalog colors + choosing blank color…")
-            try:
-                available_colors = await list_catalog_colors(
-                    blueprint_id=int(config["blueprint_id"]),
-                    print_provider_id=int(config["print_provider_id"]),
-                )
-            except PrintifyError:
-                log.exception("catalog color fetch failed; using fallback palette")
-                available_colors = sorted(config.get("fallback_colors") or FALLBACK_COLORS)
-            log.info("catalog colors available=%d", len(available_colors))
+    redo_instructions: str | None = None
+    prior_front: bytes | None = None
 
-            blank_color, color_reason, ink_hint = await choose_blank_color(
-                company,
-                available_colors,
-                product_label=str(config["label"]).lower(),
-                brand=brand,
-            )
-            log.info(
-                "blank color=%r ink=%r reason=%r",
-                blank_color,
-                ink_hint,
-                color_reason,
-            )
-        else:
-            log.info("step 0/6 mug has no blank color — white ceramic")
-            color_reason = "White ceramic mug (no color variants)."
-
-        redo_instructions: str | None = None
-        prior_front: bytes | None = None
-
-        for attempt in range(1, max_attempts + 1):
-            attempts_used = attempt
-            log.info(
-                "step 1/6 generating print + mockup (attempt %d/%d, brand=%s logo_ref=%s)…",
-                attempt,
-                max_attempts,
-                brand.source if brand else "none",
-                has_logo_ref,
-            )
-            (
-                front_bytes,
-                back_bytes,
-                sleeve_bytes,
-                neck_bytes,
-                jersey_bytes,
-                front_prompt,
-            ) = await _generate_print_and_mockup(
-                ptype=ptype,
-                company=company,
-                candidate=candidate,
-                blank_color=blank_color,
-                ink_hint=ink_hint,
-                brand=brand,
-                has_logo_ref=has_logo_ref,
-                brand_refs=brand_refs,
-                design_prompt=brief,
-                redo_instructions=redo_instructions,
-                prior_front=prior_front,
-            )
-
-            log.info("step 2/6 design critic review (attempt %d)…", attempt)
-            review: DesignReview = await review_design(
-                company_name=company,
-                candidate_name=candidate,
-                product_type=ptype,
-                blank_color=blank_color,
-                design_prompt=brief,
-                brand=brand,
-                has_logo_ref=has_logo_ref,
-                front_png=front_bytes,
-                mockup_png=jersey_bytes,
-                generation_brief=front_prompt,
-                logo_png=logo_bytes,
-                attempt=attempt,
-            )
-            review_history.append(review.to_dict())
-            final_decision = review.decision
-
-            if review.decision == "approve":
-                log.info("design approved on attempt %d score=%s", attempt, review.score)
-                break
-
-            if attempt >= max_attempts:
-                log.info(
-                    "design still redo after %d attempts — shipping best effort",
-                    max_attempts,
-                )
-                break
-
-            log.info(
-                "design redo requested: %s",
-                (review.redo_instructions or "")[:200],
-            )
-            redo_instructions = review.redo_instructions
-            prior_front = front_bytes
-
-        log.info("step 3/6 generating try-on…")
-        tryon_bytes = await generate_image(
-            tryon_prompt(ptype, company, candidate, blank_color),
-            references=[
-                reference_from_bytes(photo_bytes, content_type),
-                reference_from_bytes(jersey_bytes, "image/png"),
-            ],
+    for attempt in range(1, max_attempts + 1):
+        attempts_used = attempt
+        log.info(
+            "candidate %d/%d print + mockup (attempt %d/%d)…",
+            index,
+            total,
+            attempt,
+            max_attempts,
         )
-    except (OpenRouterImageError, OpenRouterChatError) as exc:
-        log.exception("OpenRouter failed")
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        (
+            front_bytes,
+            back_bytes,
+            sleeve_bytes,
+            neck_bytes,
+            jersey_bytes,
+            front_prompt,
+        ) = await _generate_print_and_mockup(
+            ptype=ptype,
+            company=company,
+            candidate=name,
+            blank_color=blank_color,
+            ink_hint=ink_hint,
+            brand=brand,
+            has_logo_ref=has_logo_ref,
+            brand_refs=brand_refs,
+            design_prompt=brief,
+            redo_instructions=redo_instructions,
+            prior_front=prior_front,
+        )
 
-    # Persist outputs
+        log.info("candidate %d/%d design critic (attempt %d)…", index, total, attempt)
+        review: DesignReview = await review_design(
+            company_name=company,
+            candidate_name=name,
+            product_type=ptype,
+            blank_color=blank_color,
+            design_prompt=brief,
+            brand=brand,
+            has_logo_ref=has_logo_ref,
+            front_png=front_bytes,
+            mockup_png=jersey_bytes,
+            generation_brief=front_prompt,
+            logo_png=logo_bytes,
+            attempt=attempt,
+        )
+        review_history.append(review.to_dict())
+        final_decision = review.decision
+
+        if review.decision == "approve":
+            log.info(
+                "candidate %d/%d approved attempt=%d score=%s",
+                index,
+                total,
+                attempt,
+                review.score,
+            )
+            break
+
+        if attempt >= max_attempts:
+            log.info(
+                "candidate %d/%d still redo after %d attempts — shipping best effort",
+                index,
+                total,
+                max_attempts,
+            )
+            break
+
+        redo_instructions = review.redo_instructions
+        prior_front = front_bytes
+
+    log.info("candidate %d/%d generating try-on…", index, total)
+    tryon_bytes = await generate_image(
+        tryon_prompt(ptype, company, name, blank_color),
+        references=[
+            reference_from_bytes(photo_bytes, content_type),
+            reference_from_bytes(jersey_bytes, "image/png"),
+        ],
+    )
+
     front_path = OUTPUTS_DIR / f"{prefix}_front.png"
     front_path.write_bytes(front_bytes)
     layer_paths: dict[str, Path] = {"front": front_path}
@@ -801,7 +791,9 @@ async def generate(
     printify_error: str | None = None
     try:
         log.info(
-            "step 4/6 uploading to Printify product=%s color=%s…",
+            "candidate %d/%d uploading Printify product=%s color=%s…",
+            index,
+            total,
             ptype,
             blank_color,
         )
@@ -812,33 +804,22 @@ async def generate(
             file_prefix=prefix,
             product_type=ptype,
             blank_color=blank_color,
-            title=f"{company} — {candidate} {label}{color_bit}",
+            title=f"{company} — {name} {label}{color_bit}",
             description=(
-                f"Custom {label.lower()} for {candidate}, branded for {company}. "
+                f"Custom {label.lower()} for {name}, branded for {company}. "
+                + (
+                    f"LinkedIn: {candidate.linkedin_profile_link}. "
+                    if candidate.linkedin_profile_link
+                    else ""
+                )
                 + (f"Blank color: {blank_color}. " if blank_color else "")
                 + (f"Design brief: {brief}. " if brief else "")
                 + "Draft product created by Jersey Studio for future Printify ordering."
             ),
         )
-        log.info(
-            "Printify product %s type=%s color=%s positions=%s",
-            printify_info.get("product_id"),
-            ptype,
-            printify_info.get("blank_color"),
-            printify_info.get("positions"),
-        )
     except PrintifyError as exc:
-        log.exception("Printify failed")
+        log.exception("Printify failed for candidate %r", name)
         printify_error = str(exc)
-
-    log.info(
-        "generate done run=%s product=%s color=%s review=%s attempts=%d",
-        run_id,
-        ptype,
-        blank_color,
-        final_decision,
-        attempts_used,
-    )
 
     layers: dict[str, str | None] = {
         "front_png": to_data_url(front_bytes),
@@ -850,29 +831,13 @@ async def generate(
         "neck_png": to_data_url(neck_bytes) if neck_bytes else None,
         "neck_filename": layer_paths["neck"].name if "neck" in layer_paths else None,
     }
-
     latest = review_history[-1] if review_history else None
+
     return {
-        "product_type": ptype,
-        "product_label": config["label"],
-        "shirt_color": blank_color,
-        "blank_color": blank_color,
-        "color_reason": color_reason,
-        "catalog_color_count": len(available_colors),
-        "design_prompt": brief or None,
-        "brand": (
-            {
-                "title": brand.title,
-                "domain": brand.domain,
-                "slogan": brand.slogan,
-                "colors": brand.color_hexes,
-                "logo_count": len(brand.logo_urls),
-                "logo_used": has_logo_ref,
-                "source": brand.source,
-            }
-            if brand
-            else None
-        ),
+        "first_name": candidate.first_name,
+        "last_name": candidate.last_name,
+        "candidate_name": name,
+        "linkedin_profile_link": candidate.linkedin_profile_link,
         "review": {
             "decision": final_decision,
             "attempts": attempts_used,
@@ -888,3 +853,209 @@ async def generate(
         "printify": printify_info,
         "printify_error": printify_error,
     }
+
+
+@app.get("/")
+async def index() -> FileResponse:
+    return FileResponse(STATIC_DIR / "index.html")
+
+
+@app.get("/health")
+async def health() -> dict:
+    return {
+        "ok": True,
+        "app": "jersey-studio",
+        "product_types": sorted(PRODUCT_TYPES),
+    }
+
+
+@app.post("/generate")
+async def generate(
+    company_name: str = Form(...),
+    photo: UploadFile = File(...),
+    candidates_file: UploadFile | None = File(None),
+    candidates_text: str = Form(""),
+    product_type: str = Form("tee"),
+    design_prompt: str = Form(""),
+) -> dict:
+    company = company_name.strip()
+    brief = (design_prompt or "").strip()
+    if not company:
+        raise HTTPException(status_code=400, detail="Company name is required.")
+
+    text_list = (candidates_text or "").strip()
+    file_bytes = b""
+    if candidates_file is not None:
+        file_bytes = await candidates_file.read()
+
+    try:
+        if text_list:
+            candidates = parse_candidates_text(text_list)
+        elif file_bytes:
+            candidates = parse_candidates_file(
+                candidates_file.filename if candidates_file else None,
+                file_bytes,
+            )
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="Provide candidates as free text or upload a CSV/Excel file.",
+            )
+    except CandidatesFileError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    # Drop accidental CSV header rows that slipped into free-text (e.g. "first_name last_name").
+    filtered: list[Candidate] = []
+    for person in candidates:
+        blob = f"{person.first_name} {person.last_name}".strip().lower()
+        if re.search(r"first[_\s:]*name|last[_\s:]*name|^linkedin$", blob):
+            log.info("skipping header-like candidate %r", person.full_name)
+            continue
+        filtered.append(person)
+    candidates = filtered
+    if not candidates:
+        raise HTTPException(
+            status_code=400,
+            detail="No valid candidates after filtering header rows. Check your CSV/text.",
+        )
+
+    ptype = _normalize_product_type(product_type)
+    config = get_product_config(ptype)
+
+    photo_bytes = await photo.read()
+    if not photo_bytes:
+        raise HTTPException(status_code=400, detail="Photo is empty.")
+
+    content_type = (photo.content_type or "image/jpeg").split(";")[0].strip()
+    if not content_type.startswith("image/"):
+        raise HTTPException(status_code=400, detail="Upload must be an image.")
+
+    batch_id = uuid.uuid4().hex[:10]
+    log.info(
+        "generate start company=%r candidates=%d product=%s batch=%s brief=%r",
+        company,
+        len(candidates),
+        ptype,
+        batch_id,
+        brief[:120] if brief else "",
+    )
+
+    brand = await lookup_brand(company)
+    brand = await enrich_brand_colors(company, brand)
+    logo_ref: dict | None = None
+    logo_bytes: bytes | None = None
+    if brand:
+        logo = await download_preferred_logo(brand)
+        if logo:
+            logo_bytes, logo_media = logo
+            logo_ref = reference_from_bytes(logo_bytes, logo_media)
+    has_logo_ref = logo_ref is not None
+    brand_refs = [logo_ref] if logo_ref else None
+
+    blank_color: str | None = None
+    color_reason = ""
+    ink_hint: str | None = None
+    available_colors: list[str] = []
+
+    try:
+        if config["has_color"]:
+            log.info("step 0 loading Printify catalog colors + choosing blank color…")
+            try:
+                available_colors = await list_catalog_colors(
+                    blueprint_id=int(config["blueprint_id"]),
+                    print_provider_id=int(config["print_provider_id"]),
+                )
+            except PrintifyError:
+                log.exception("catalog color fetch failed; using fallback palette")
+                available_colors = sorted(config.get("fallback_colors") or FALLBACK_COLORS)
+            log.info("catalog colors available=%d", len(available_colors))
+
+            blank_color, color_reason, ink_hint = await choose_blank_color(
+                company,
+                available_colors,
+                product_label=str(config["label"]).lower(),
+                brand=brand,
+            )
+            log.info(
+                "blank color=%r ink=%r reason=%r",
+                blank_color,
+                ink_hint,
+                color_reason,
+            )
+        else:
+            log.info("step 0 mug has no blank color — white ceramic")
+            color_reason = "White ceramic mug (no color variants)."
+
+        results: list[dict] = []
+        total = len(candidates)
+        for index, person in enumerate(candidates, start=1):
+            results.append(
+                await _run_candidate_pipeline(
+                    company=company,
+                    candidate=person,
+                    ptype=ptype,
+                    config=config,
+                    brief=brief,
+                    photo_bytes=photo_bytes,
+                    content_type=content_type,
+                    brand=brand,
+                    logo_bytes=logo_bytes,
+                    has_logo_ref=has_logo_ref,
+                    brand_refs=brand_refs,
+                    blank_color=blank_color,
+                    ink_hint=ink_hint,
+                    batch_id=batch_id,
+                    index=index,
+                    total=total,
+                )
+            )
+    except (OpenRouterImageError, OpenRouterChatError) as exc:
+        log.exception("OpenRouter failed")
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    log.info(
+        "generate done batch=%s product=%s color=%s candidates=%d",
+        batch_id,
+        ptype,
+        blank_color,
+        len(results),
+    )
+
+    first = results[0]
+    return {
+        "product_type": ptype,
+        "product_label": config["label"],
+        "shirt_color": blank_color,
+        "blank_color": blank_color,
+        "color_reason": color_reason,
+        "catalog_color_count": len(available_colors),
+        "design_prompt": brief or None,
+        "candidate_count": len(results),
+        "brand": (
+            {
+                "title": brand.title,
+                "domain": brand.domain,
+                "slogan": brand.slogan,
+                "colors": brand.color_hexes,
+                "logo_count": len(brand.logo_urls),
+                "logo_used": has_logo_ref,
+                "source": brand.source,
+            }
+            if brand
+            else None
+        ),
+        "candidates": results,
+        "first_name": first["first_name"],
+        "last_name": first["last_name"],
+        "candidate_name": first["candidate_name"],
+        "linkedin_profile_link": first["linkedin_profile_link"],
+        "review": first["review"],
+        "jersey_png": first["jersey_png"],
+        "tryon_png": first["tryon_png"],
+        "jersey_filename": first["jersey_filename"],
+        "tryon_filename": first["tryon_filename"],
+        "layers": first["layers"],
+        "printify": first["printify"],
+        "printify_error": first["printify_error"],
+    }
+

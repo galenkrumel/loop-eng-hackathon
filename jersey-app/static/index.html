@@ -1,493 +1,1458 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
+  <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Jersey Studio</title>
+  <title>Sendoff Swag Studio</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,600;0,9..40,700;1,9..40,400&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=Nunito:wght@400;600;700;800;900&display=swap" rel="stylesheet" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
   <style>
     :root {
-      --ink: #12161c;
-      --paper: #e8edf2;
-      --field: #1a222d;
-      --line: rgba(232, 237, 242, 0.14);
-      --accent: #e85d04;
-      --accent-soft: rgba(232, 93, 4, 0.18);
-      --muted: rgba(232, 237, 242, 0.62);
-      --ok: #3dd68c;
+      --cream: #efe6d8;
+      --panel: #f7f1e7;
+      --ink: #3a2f28;
+      --muted: #8a7869;
+      --line: #ece0d0;
+      --border: #e3d4c1;
+      --accent: oklch(0.68 0.14 40);
+      --accent-text: oklch(0.60 0.13 40);
+      --ok: #2f7a52;
+      --ok-bg: #eaf5ee;
+      --ok-border: #cfe7d8;
     }
 
-    * { box-sizing: border-box; margin: 0; padding: 0; }
+    * { box-sizing: border-box; }
 
     body {
+      margin: 0;
+      background: var(--cream);
+      font-family: "Nunito", system-ui, sans-serif;
+      color: var(--ink);
+    }
+
+    a { color: var(--accent-text); text-decoration: none; }
+    a:hover { color: oklch(0.52 0.14 40); }
+
+    @keyframes so-pop {
+      from { opacity: 0; transform: translateY(6px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .page {
       min-height: 100vh;
-      color: var(--paper);
-      font-family: "DM Sans", system-ui, sans-serif;
-      background:
-        radial-gradient(ellipse 80% 50% at 10% 0%, rgba(232, 93, 4, 0.22), transparent 55%),
-        radial-gradient(ellipse 60% 45% at 90% 10%, rgba(61, 214, 140, 0.1), transparent 50%),
-        linear-gradient(165deg, #0b0e13 0%, #151b24 50%, #0f1319 100%);
+      display: flex;
+      justify-content: center;
+      align-items: flex-start;
+      padding: 40px 24px;
     }
 
-    .wrap {
-      width: min(920px, 92vw);
-      margin: 0 auto;
-      padding: clamp(2rem, 5vw, 3.5rem) 0 4rem;
+    .shell {
+      width: 1180px;
+      max-width: 100%;
+      background: var(--panel);
+      border-radius: 22px;
+      overflow: hidden;
+      box-shadow: 0 24px 60px rgba(80, 50, 25, 0.14);
+      border: 1px solid var(--line);
     }
 
-    header {
-      margin-bottom: 2.25rem;
+    .topbar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 16px 26px;
+      background: #fffaf2;
+      border-bottom: 1px solid var(--line);
     }
 
-    .brand {
-      font-family: "Bebas Neue", sans-serif;
-      font-size: clamp(2.8rem, 9vw, 4.6rem);
-      letter-spacing: 0.04em;
-      line-height: 0.95;
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 11px;
     }
 
-    .brand span { color: var(--accent); }
+    .brand-mark {
+      width: 32px;
+      height: 32px;
+      border-radius: 10px;
+      background: var(--accent);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: #fff;
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-weight: 800;
+      font-size: 18px;
+    }
+
+    .brand-name {
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-weight: 700;
+      font-size: 19px;
+      letter-spacing: -0.3px;
+    }
+
+    .brand-sub {
+      font-size: 12px;
+      color: #ab9884;
+      padding-left: 2px;
+    }
+
+    .user-chip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 13px;
+      font-weight: 700;
+      color: #7a6a5c;
+    }
+
+    .avatar {
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      background: linear-gradient(135deg, #f0d9bf, #e6bfa0);
+    }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 400px 1fr;
+    }
+
+    @media (max-width: 900px) {
+      .layout { grid-template-columns: 1fr; }
+      .page { padding: 16px 12px; }
+    }
+
+    .form-panel {
+      padding: 28px;
+      display: flex;
+      flex-direction: column;
+      gap: 18px;
+      border-right: 1px solid var(--line);
+    }
+
+    .title {
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-weight: 700;
+      font-size: 24px;
+      letter-spacing: -0.4px;
+    }
 
     .lede {
-      margin-top: 0.75rem;
-      max-width: 34rem;
+      font-size: 13.5px;
       color: var(--muted);
-      font-size: 1.05rem;
+      margin-top: 3px;
+    }
+
+    .field-label {
+      font: 800 10.5px "Nunito";
+      letter-spacing: 0.7px;
+      text-transform: uppercase;
+      color: #7a6a5c;
+    }
+
+    .hint {
+      font-size: 11px;
+      color: #b0a08e;
+      font-weight: 700;
       line-height: 1.5;
     }
 
-    form {
-      display: grid;
-      gap: 1.1rem;
-      padding: 1.4rem 0 0;
-      border-top: 1px solid var(--line);
+    .hint span { color: var(--muted); }
+
+    .dropzone {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
+      text-align: center;
+      padding: 26px 18px;
+      border-radius: 15px;
+      cursor: pointer;
+      transition: 0.15s;
+      border: 2px dashed #dcc9b2;
+      background: #fbf6ee;
     }
 
-    label {
-      display: grid;
-      gap: 0.4rem;
-      font-size: 0.78rem;
+    .dropzone.drag {
+      border-color: var(--accent);
+      background: #faf0e4;
+    }
+
+    .drop-icon {
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      background: #f4e7d6;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+    }
+
+    .drop-title {
+      font-family: "Bricolage Grotesque", sans-serif;
       font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
+      font-size: 15px;
+      color: #5b4a3d;
+    }
+
+    .drop-sub {
+      font-size: 12.5px;
+      color: #a3927f;
+      font-weight: 600;
+    }
+
+    .drop-sub span {
+      color: oklch(0.62 0.14 40);
+      text-decoration: underline;
+    }
+
+    .file-card {
+      display: flex;
+      align-items: center;
+      gap: 11px;
+      background: #fff;
+      border: 1.5px solid var(--border);
+      border-radius: 13px;
+      padding: 11px 13px;
+    }
+
+    .file-icon {
+      width: 34px;
+      height: 34px;
+      flex: none;
+      border-radius: 9px;
+      background: var(--ok-bg);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 16px;
+    }
+
+    .file-name {
+      font-weight: 800;
+      font-size: 13px;
+      color: #4a3b2f;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .file-meta {
+      font-size: 11.5px;
+      color: #9a8674;
+      font-weight: 700;
+    }
+
+    .btn-quiet {
+      border: none;
+      background: #f4ece0;
+      color: #8a6f57;
+      border-radius: 9px;
+      padding: 7px 11px;
+      font: 800 12px "Nunito";
+      cursor: pointer;
+    }
+
+    .input,
+    .select,
+    .textarea {
+      width: 100%;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      border-radius: 12px;
+      padding: 11px 13px;
+      font: 600 14px "Nunito";
+      color: var(--ink);
+      outline: none;
+    }
+
+    .input:focus,
+    .select:focus,
+    .textarea:focus {
+      border-color: var(--accent);
+    }
+
+    .select {
+      appearance: none;
+      font-weight: 800;
+      cursor: pointer;
+    }
+
+    .textarea {
+      resize: vertical;
+      min-height: 4.5rem;
+      line-height: 1.5;
+    }
+
+    .pills {
+      display: flex;
+      gap: 9px;
+    }
+
+    .pill {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 5px;
+      padding: 12px 6px;
+      border-radius: 13px;
+      font-weight: 800;
+      font-size: 12.5px;
+      cursor: pointer;
+      background: #fff;
+      border: 1.5px solid var(--border);
       color: var(--muted);
     }
 
-    input[type="text"],
-    input[type="file"],
-    textarea {
-      width: 100%;
-      border: 1px solid var(--line);
-      background: var(--field);
-      color: var(--paper);
-      border-radius: 10px;
-      padding: 0.85rem 1rem;
-      font: inherit;
-      font-size: 1rem;
-      letter-spacing: normal;
-      text-transform: none;
-      font-weight: 400;
-    }
-
-    textarea {
-      min-height: 5.5rem;
-      resize: vertical;
-      line-height: 1.45;
-    }
-
-    input[type="file"] {
-      padding: 0.7rem 0.85rem;
-    }
-
-    input:focus,
-    textarea:focus {
-      outline: 2px solid var(--accent);
-      outline-offset: 1px;
-    }
-
-    .row {
-      display: grid;
-      gap: 1.1rem;
-    }
-
-    @media (min-width: 640px) {
-      .row { grid-template-columns: 1fr 1fr; }
-    }
-
-    button {
-      margin-top: 0.35rem;
-      justify-self: start;
-      border: 0;
-      border-radius: 10px;
-      padding: 0.95rem 1.45rem;
+    .pill.active {
       background: var(--accent);
       color: #fff;
-      font: inherit;
-      font-weight: 700;
-      letter-spacing: 0.02em;
+      border-color: transparent;
+      box-shadow: 0 6px 14px rgba(190, 90, 50, 0.28);
+    }
+
+    .btn-generate {
+      margin-top: 4px;
+      border: none;
       cursor: pointer;
-      transition: transform 0.15s ease, filter 0.15s ease;
+      background: var(--accent);
+      color: #fff;
+      border-radius: 13px;
+      padding: 14px;
+      font: 800 15px "Nunito";
+      box-shadow: 0 8px 18px rgba(190, 90, 50, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 8px;
     }
 
-    button:hover:not(:disabled) {
-      transform: translateY(-1px);
-      filter: brightness(1.08);
-    }
-
-    button:disabled {
+    .btn-generate:disabled {
       opacity: 0.55;
       cursor: wait;
     }
 
-    .status {
-      min-height: 1.4rem;
-      margin-top: 0.85rem;
-      color: var(--muted);
-      font-size: 0.95rem;
-    }
-
-    .status.error { color: #ff7b72; }
-    .status.ok { color: var(--ok); }
-
-    .results {
-      display: none;
-      margin-top: 2.2rem;
-      padding-top: 1.6rem;
-      border-top: 1px solid var(--line);
-      gap: 1.4rem;
-    }
-
-    .results.show { display: grid; }
-
-    .results.primary.show { grid-template-columns: 1fr; }
-
-    @media (min-width: 720px) {
-      .results.primary.show { grid-template-columns: 1fr 1fr; }
-    }
-
-    .results.layers.show {
-      margin-top: 1.2rem;
-      padding-top: 1.2rem;
-      grid-template-columns: 1fr 1fr;
-    }
-
-    @media (min-width: 720px) {
-      .results.layers.show { grid-template-columns: repeat(4, 1fr); }
-    }
-
-    .section-label {
-      display: none;
-      margin-top: 1.8rem;
-      font-family: "Bebas Neue", sans-serif;
-      font-size: 1.2rem;
-      letter-spacing: 0.06em;
-      color: var(--muted);
-    }
-
-    .section-label.show { display: block; }
-
-    figure {
-      display: grid;
-      gap: 0.75rem;
-    }
-
-    figcaption {
-      font-family: "Bebas Neue", sans-serif;
-      font-size: 1.35rem;
-      letter-spacing: 0.05em;
-    }
-
-    figure img {
-      width: 100%;
-      aspect-ratio: 1;
-      object-fit: contain;
-      border-radius: 12px;
-      border: 1px solid var(--line);
-      background:
-        linear-gradient(45deg, #1a222d 25%, transparent 25%),
-        linear-gradient(-45deg, #1a222d 25%, transparent 25%),
-        linear-gradient(45deg, transparent 75%, #1a222d 75%),
-        linear-gradient(-45deg, transparent 75%, #1a222d 75%);
-      background-size: 16px 16px;
-      background-position: 0 0, 0 8px, 8px -8px, -8px 0;
-      background-color: #121820;
-    }
-
-    .dl {
-      display: inline-flex;
+    .photo-row {
+      display: flex;
       align-items: center;
-      gap: 0.4rem;
-      color: var(--paper);
-      text-decoration: none;
-      font-weight: 600;
-      font-size: 0.92rem;
-      padding: 0.45rem 0.75rem;
-      border-radius: 8px;
-      background: var(--accent-soft);
-      border: 1px solid rgba(232, 93, 4, 0.35);
-      width: fit-content;
-    }
-
-    .dl:hover { filter: brightness(1.15); }
-
-    .printify {
-      display: none;
-      margin-top: 1.6rem;
-      padding: 1rem 1.15rem;
+      gap: 10px;
+      background: #fff;
+      border: 1.5px solid var(--border);
       border-radius: 12px;
-      border: 1px solid var(--line);
-      background: rgba(26, 34, 45, 0.85);
-      gap: 0.45rem;
+      padding: 10px 12px;
     }
 
-    .printify.show { display: grid; }
-
-    .printify h2 {
-      font-family: "Bebas Neue", sans-serif;
-      font-size: 1.35rem;
-      letter-spacing: 0.05em;
-    }
-
-    .printify p {
+    .photo-row input[type="file"] {
+      flex: 1;
+      font: 600 12px "Nunito";
       color: var(--muted);
-      font-size: 0.95rem;
-      line-height: 1.45;
+      min-width: 0;
     }
 
-    .printify a {
-      color: var(--accent);
+    .photo-name {
+      font-size: 12px;
       font-weight: 700;
-      text-decoration: none;
-      width: fit-content;
+      color: #5b4a3d;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 140px;
     }
 
-    .printify a:hover { text-decoration: underline; }
+    .preview-panel {
+      padding: 26px;
+      background: radial-gradient(130% 90% at 60% 10%, #fffdf8, #f1e5d2);
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      position: relative;
+      min-height: 560px;
+    }
 
-    .review {
-      display: none;
-      margin-top: 1.6rem;
-      padding: 1rem 1.15rem;
-      border-radius: 12px;
+    .preview-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .status-ready {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-weight: 800;
+      font-size: 13px;
+      color: #5f9e6e;
+    }
+
+    .status-ready.busy { color: #b07a3a; }
+    .status-ready.idle { color: #a3927f; }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: currentColor;
+      display: inline-block;
+    }
+
+    .product-label {
+      font-size: 12px;
+      color: #a3927f;
+      font-weight: 700;
+    }
+
+    .stage {
+      flex: 1;
+      min-height: 300px;
+      border-radius: 18px;
+      background: radial-gradient(120% 90% at 50% 18%, #fff8ee, #f2e6d3);
       border: 1px solid var(--line);
-      background: rgba(26, 34, 45, 0.85);
-      gap: 0.4rem;
-    }
-
-    .review.show { display: grid; }
-
-    .review h2 {
-      font-family: "Bebas Neue", sans-serif;
-      font-size: 1.35rem;
-      letter-spacing: 0.05em;
-    }
-
-    .review p {
-      color: var(--muted);
-      font-size: 0.95rem;
-      line-height: 1.45;
-    }
-
-    .review .badge {
-      width: fit-content;
-      font-size: 0.78rem;
-      font-weight: 700;
-      letter-spacing: 0.06em;
-      text-transform: uppercase;
-      padding: 0.3rem 0.55rem;
-      border-radius: 6px;
-      background: var(--accent-soft);
-      border: 1px solid rgba(232, 93, 4, 0.35);
-      color: var(--paper);
-    }
-
-    .review .badge.ok {
-      background: rgba(61, 214, 140, 0.15);
-      border-color: rgba(61, 214, 140, 0.4);
-      color: var(--ok);
-    }
-
-    .product-type {
-      display: grid;
-      grid-template-columns: repeat(3, 1fr);
-      gap: 0.65rem;
-    }
-
-    .product-type label.choice {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 0.45rem;
-      padding: 0.85rem 0.6rem;
-      border-radius: 10px;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .stage-tag {
+      position: absolute;
+      top: 14px;
+      left: 14px;
+      font: 700 10px "Nunito";
+      letter-spacing: 1px;
+      color: #c3b3a0;
+      text-transform: uppercase;
+      z-index: 2;
+    }
+
+    .stage img.mockup {
+      max-width: 92%;
+      max-height: 340px;
+      object-fit: contain;
+      border-radius: 12px;
+      box-shadow: 0 12px 28px rgba(80, 50, 25, 0.12);
+    }
+
+    /* CSS fake products (pre-generate) */
+    .fake-mug { position: relative; width: 310px; height: 250px; }
+    .fake-mug .handle {
+      position: absolute; right: 22px; top: 66px; width: 82px; height: 112px;
+      border: 24px solid #e9edf1; border-radius: 50%;
+    }
+    .fake-mug .body {
+      position: absolute; left: 44px; top: 38px; width: 200px; height: 192px;
+      border-radius: 16px 16px 22px 22px;
+      background: linear-gradient(90deg, #cbcfd4, #f8fafb 22%, #ffffff 50%, #eef1f4 78%, #c6cacf);
+      box-shadow: inset 0 -12px 22px rgba(0, 0, 0, 0.06);
+    }
+    .fake-mug .rim {
+      position: absolute; left: 44px; top: 29px; width: 200px; height: 28px;
+      border-radius: 50%; background: #dfe3e7; box-shadow: inset 0 3px 6px rgba(0, 0, 0, 0.14);
+    }
+    .fake-mug .inner {
+      position: absolute; left: 57px; top: 33px; width: 174px; height: 18px;
+      border-radius: 50%; background: #bcc1c7;
+    }
+    .fake-mug .art {
+      position: absolute; left: 50%; top: 120px;
+      transform: translate(-50%, -50%) scaleX(0.92);
+      -webkit-mask: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+      mask: linear-gradient(90deg, transparent, #000 16%, #000 84%, transparent);
+      display: flex; flex-direction: column; align-items: center; gap: 5px;
+    }
+
+    .fake-shirt { position: relative; width: 280px; height: 290px; }
+    .fake-shirt .body {
+      position: absolute; inset: 0;
+      background: linear-gradient(160deg, #6d4d86, #57386f);
+      clip-path: polygon(38% 4%, 30% 8%, 3% 20%, 9% 40%, 26% 31%, 24% 97%, 76% 97%, 74% 31%, 91% 40%, 97% 20%, 70% 8%, 62% 4%, 50% 13%);
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.2);
+    }
+    .fake-shirt .collar {
+      position: absolute; left: 50%; top: 2%; transform: translateX(-50%);
+      width: 24%; height: 8%; border: 5px solid #4a2f61; border-top: none;
+      border-radius: 0 0 60% 60%;
+    }
+    .fake-shirt .art {
+      position: absolute; left: 50%; top: 42%; transform: translate(-50%, -50%);
+      display: flex; flex-direction: column; align-items: center; gap: 4px;
+    }
+
+    .fake-hat { position: relative; width: 320px; height: 220px; }
+    .fake-hat .brim {
+      position: absolute; left: 34px; bottom: 20px; width: 200px; height: 56px;
+      background: linear-gradient(#33523f, #274031);
+      border-radius: 0 0 100px 100px / 0 0 56px 56px;
+      transform: rotate(-3deg);
+      box-shadow: 0 8px 14px rgba(0, 0, 0, 0.25);
+    }
+    .fake-hat .crown {
+      position: absolute; left: 62px; top: 22px; width: 212px; height: 142px;
+      border-radius: 106px 106px 26px 26px;
+      background: linear-gradient(100deg, #2f4a39, #3f6650 45%, #4a7259 55%, #2c4635);
+      box-shadow: inset 0 -10px 20px rgba(0, 0, 0, 0.25);
+    }
+    .fake-hat .button {
+      position: absolute; left: 163px; top: 16px; width: 10px; height: 10px;
+      border-radius: 50%; background: #274031;
+    }
+    .fake-hat .art {
+      position: absolute; left: 50%; top: 96px;
+      transform: translate(-40%, -50%) scaleX(0.94);
+      -webkit-mask: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+      mask: linear-gradient(90deg, transparent, #000 18%, #000 82%, transparent);
+      display: flex; flex-direction: column; align-items: center; gap: 3px;
+    }
+
+    .sun { position: absolute; left: 50%; top: 0; transform: translateX(-50%); border-radius: 50%; background: #e8a53c; }
+    .hill-l, .hill-r { position: absolute; bottom: 0; clip-path: polygon(50% 0, 100% 100%, 0 100%); }
+    .brand-text {
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-weight: 800;
+      letter-spacing: 0.4px;
+    }
+    .est {
+      letter-spacing: 3px;
+      font-weight: 800;
+    }
+
+    .bottom-row {
+      display: flex;
+      gap: 14px;
+      align-items: stretch;
+    }
+
+    .polaroid {
+      width: 150px;
+      flex: none;
+      background: #fff;
       border: 1px solid var(--line);
-      background: var(--field);
-      color: var(--paper);
-      font-size: 0.95rem;
-      font-weight: 600;
-      letter-spacing: normal;
-      text-transform: none;
+      border-radius: 14px;
+      padding: 10px 10px 12px;
+      transform: rotate(-3deg);
+      box-shadow: 0 10px 24px rgba(80, 50, 25, 0.12);
+    }
+
+    .polaroid-img {
+      height: 120px;
+      border-radius: 8px;
+      background: repeating-linear-gradient(45deg, #efe4d5, #efe4d5 9px, #e7d9c6 9px, #e7d9c6 18px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    .polaroid-img img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .polaroid-img span {
+      font: 700 8.5px ui-monospace, monospace;
+      color: #a8967f;
+      padding: 0 8px;
+    }
+
+    .polaroid-caption {
+      font-family: "Bricolage Grotesque", sans-serif;
+      font-weight: 700;
+      font-size: 12px;
+      margin-top: 8px;
+      color: #5b4a3d;
+    }
+
+    .polaroid-link {
+      display: block;
+      font-size: 10px;
+      font-weight: 800;
+      margin-top: 2px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .actions {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .printify-link {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--ok-bg);
+      border: 1.5px solid var(--ok-border);
+      border-radius: 13px;
+      padding: 12px 14px;
+      color: var(--ok);
+    }
+
+    .printify-link.disabled {
+      background: #f4ece0;
+      border-color: var(--border);
+      color: #9a8674;
+      pointer-events: none;
+    }
+
+    .printify-link.error {
+      background: #fceeee;
+      border-color: #efcfcf;
+      color: #9a4a4a;
+    }
+
+    .printify-left {
+      display: flex;
+      align-items: center;
+      gap: 9px;
+      font-weight: 800;
+      font-size: 13.5px;
+    }
+
+    .printify-badge {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      background: var(--ok);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+    }
+
+    .printify-link.error .printify-badge,
+    .printify-link.disabled .printify-badge {
+      background: currentColor;
+      color: #fff;
+    }
+
+    .printify-open {
+      font-weight: 800;
+      font-size: 12.5px;
+    }
+
+    .action-btns {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn-dl {
+      flex: 1;
+      border: 1.5px solid var(--border);
+      background: #fff;
+      color: #5b4a3d;
+      border-radius: 13px;
+      padding: 13px;
+      font: 800 13.5px "Nunito";
       cursor: pointer;
-      transition: border-color 0.15s ease, background 0.15s ease;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
     }
 
-    .product-type input {
-      accent-color: var(--accent);
+    .btn-dl:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
     }
 
-    .product-type label.choice:has(input:checked) {
-      border-color: rgba(232, 93, 4, 0.7);
-      background: var(--accent-soft);
+    .btn-send {
+      flex: 1;
+      border: none;
+      background: #2a221c;
+      color: #fff;
+      border-radius: 13px;
+      padding: 13px;
+      font: 800 13.5px "Nunito";
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 7px;
     }
 
-    .layer-card[hidden] { display: none !important; }
+    .toast {
+      position: absolute;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #2a221c;
+      color: #fff;
+      padding: 11px 18px;
+      border-radius: 12px;
+      font: 800 13px "Nunito";
+      box-shadow: 0 12px 28px rgba(0, 0, 0, 0.25);
+      animation: so-pop 0.25s ease;
+      z-index: 10;
+      max-width: 90%;
+      text-align: center;
+    }
+
+    .toast.sticky {
+      animation: none;
+    }
+
+    .hidden { display: none !important; }
+
+    .stack { display: flex; flex-direction: column; gap: 8px; }
+    .stack-tight { display: flex; flex-direction: column; gap: 10px; }
+    .stack-sm { display: flex; flex-direction: column; gap: 6px; }
+
+    .mode-tabs {
+      display: flex;
+      gap: 6px;
+      background: #f0e6d8;
+      border-radius: 12px;
+      padding: 4px;
+    }
+
+    .mode-tab {
+      flex: 1;
+      border: none;
+      background: transparent;
+      color: #8a7869;
+      border-radius: 9px;
+      padding: 9px 10px;
+      font: 800 12.5px "Nunito";
+      cursor: pointer;
+    }
+
+    .mode-tab.active {
+      background: #fff;
+      color: #3a2f28;
+      box-shadow: 0 2px 8px rgba(80, 50, 25, 0.08);
+    }
+
+    .describe-need {
+      font-size: 12.5px;
+      color: #8a7869;
+      font-weight: 700;
+      line-height: 1.55;
+      background: #fbf6ee;
+      border: 1px solid #ece0d0;
+      border-radius: 12px;
+      padding: 11px 13px;
+    }
+
+    .describe-need strong {
+      color: #5b4a3d;
+      font-weight: 800;
+    }
+
+    #describeText {
+      min-height: 9.5rem;
+    }
   </style>
 </head>
 <body>
-  <div class="wrap">
-    <header>
-      <h1 class="brand">Jersey <span>Studio</span></h1>
-      <p class="lede">
-        Enter a company, optional design brief, candidate name, and a photo. Choose a
-        t-shirt, hat, or mug — a vision critic checks brand fit (via web search) and
-        may redo the art before Printify, mockup, and try-on.
-      </p>
-    </header>
-
-    <form id="form">
-      <label>
-        Product
-        <div class="product-type" role="radiogroup" aria-label="Product type">
-          <label class="choice">
-            <input type="radio" name="product_type" value="tee" checked />
-            T-shirt
-          </label>
-          <label class="choice">
-            <input type="radio" name="product_type" value="hat" />
-            Hat
-          </label>
-          <label class="choice">
-            <input type="radio" name="product_type" value="mug" />
-            Mug
-          </label>
+  <div class="page">
+    <div class="shell">
+      <div class="topbar">
+        <div class="brand-row">
+          <div class="brand-mark">◎</div>
+          <div class="brand-name">Sendoff</div>
+          <div class="brand-sub">Swag Studio</div>
         </div>
-      </label>
-      <div class="row">
-        <label>
-          Company name
-          <input type="text" name="company_name" required placeholder="Acme Robotics" autocomplete="organization" />
-        </label>
-        <label>
-          Candidate name
-          <input type="text" name="candidate_name" required placeholder="Jordan Lee" autocomplete="name" />
-        </label>
+        <div class="user-chip">
+          <span>Ava · Recruiting</span>
+          <div class="avatar"></div>
+        </div>
       </div>
-      <label>
-        Design brief <span style="font-weight:400;letter-spacing:0;text-transform:none;opacity:0.75">(optional)</span>
-        <textarea
-          name="design_prompt"
-          placeholder="Minimal wordmark, navy/cream, no mascot. Keep the real logo if possible."
-          maxlength="1200"
-        ></textarea>
-      </label>
-      <label>
-        Candidate photo
-        <input type="file" name="photo" accept="image/*" required />
-      </label>
-      <button type="submit" id="submit">Generate</button>
-    </form>
 
-    <p class="status" id="status" aria-live="polite"></p>
+      <div class="layout">
+        <!-- LEFT -->
+        <div class="form-panel">
+          <div>
+            <div class="title">New swag gift</div>
+            <div class="lede" id="lede">Upload your shortlist — we design a keepsake for each candidate.</div>
+          </div>
 
-    <p class="section-label" id="previewLabel">Preview</p>
-    <section class="results primary" id="results">
-      <figure>
-        <figcaption id="mockupCaption">Style mockup</figcaption>
-        <img id="jerseyImg" alt="Generated product style mockup" />
-        <a class="dl" id="jerseyDl" download="mockup.png">Download PNG</a>
-      </figure>
-      <figure>
-        <figcaption id="tryonCaption">Try-on</figcaption>
-        <img id="tryonImg" alt="Candidate with product" />
-        <a class="dl" id="tryonDl" download="tryon.png">Download PNG</a>
-      </figure>
-    </section>
+          <div class="mode-tabs" role="tablist">
+            <button type="button" class="mode-tab active" data-mode="form" id="tabForm">Form</button>
+            <button type="button" class="mode-tab" data-mode="describe" id="tabDescribe">Describe in text</button>
+          </div>
 
-    <p class="section-label" id="layersLabel">Printify print layers</p>
-    <section class="results layers" id="layerResults">
-      <figure class="layer-card" id="frontCard">
-        <figcaption>Front</figcaption>
-        <img id="frontImg" alt="Front print layer" />
-        <a class="dl" id="frontDl" download="front.png">Download</a>
-      </figure>
-      <figure class="layer-card" id="backCard">
-        <figcaption>Back</figcaption>
-        <img id="backImg" alt="Back print layer" />
-        <a class="dl" id="backDl" download="back.png">Download</a>
-      </figure>
-      <figure class="layer-card" id="sleeveCard">
-        <figcaption>Sleeve</figcaption>
-        <img id="sleeveImg" alt="Sleeve print layer" />
-        <a class="dl" id="sleeveDl" download="sleeve.png">Download</a>
-      </figure>
-      <figure class="layer-card" id="neckCard">
-        <figcaption>Neck</figcaption>
-        <img id="neckImg" alt="Neck print layer" />
-        <a class="dl" id="neckDl" download="neck.png">Download</a>
-      </figure>
-    </section>
+          <div id="formMode" class="stack-tight">
+            <div class="stack">
+              <span class="field-label">Candidates · CSV or Excel</span>
 
-    <aside class="review" id="reviewBox">
-      <h2>Design review</h2>
-      <span class="badge" id="reviewBadge">—</span>
-      <p id="reviewMsg"></p>
-    </aside>
+              <label id="dropzone" class="dropzone">
+                <input id="candidatesFile" type="file" accept=".csv,.xlsx,.xls" hidden />
+                <div class="drop-icon">⬆</div>
+                <div class="drop-title">Drop your file here</div>
+                <div class="drop-sub">or <span>browse</span> · .csv, .xlsx, .xls</div>
+              </label>
 
-    <aside class="printify" id="printifyBox">
-      <h2>Printify draft</h2>
-      <p id="printifyMsg"></p>
-      <a id="printifyLink" href="#" target="_blank" rel="noopener" hidden>Open in Printify</a>
-    </aside>
+              <div id="fileLoaded" class="stack-tight hidden">
+                <div class="file-card">
+                  <div class="file-icon">📄</div>
+                  <div style="flex:1;min-width:0;">
+                    <div class="file-name" id="fileName">candidates.csv</div>
+                    <div class="file-meta" id="candidateCount">0 candidates loaded</div>
+                  </div>
+                  <button type="button" class="btn-quiet" id="btnReplace">Replace</button>
+                </div>
+                <label class="stack-sm">
+                  <span class="field-label" style="color:#9a8674;font-size:10px;">Previewing</span>
+                  <select id="candidateSelect" class="select"></select>
+                </label>
+              </div>
+
+              <div class="hint">Column order: <span>first_name · last_name · linkedin URL</span></div>
+            </div>
+
+            <label class="stack-sm">
+              <span class="field-label">Company</span>
+              <input id="company" class="input" type="text" value="Northwind Labs" />
+            </label>
+
+            <label class="stack-sm">
+              <span class="field-label">Design prompt</span>
+              <textarea id="prompt" class="textarea" rows="3">Cozy sunrise over pine mountains with a little fox — warm retro palette.</textarea>
+            </label>
+
+            <div class="stack">
+              <span class="field-label">Product</span>
+              <div class="pills" id="pills">
+                <button type="button" class="pill active" data-product="mug">☕<span>Mug</span></button>
+                <button type="button" class="pill" data-product="shirt">👕<span>Shirt</span></button>
+                <button type="button" class="pill" data-product="hat">🧢<span>Hat</span></button>
+              </div>
+            </div>
+          </div>
+
+          <div id="describeMode" class="stack-tight hidden">
+            <div class="stack-sm">
+              <span class="field-label">Describe everything in plain text</span>
+              <div class="describe-need">
+                Include <strong>candidate name</strong>, <strong>company</strong>,
+                <strong>item type</strong> (mug, shirt, or hat), and your
+                <strong>design wish</strong>. Optional: LinkedIn URL.
+              </div>
+              <textarea
+                id="describeText"
+                class="textarea"
+                rows="8"
+                placeholder="Example:&#10;Candidate: Maya Chen&#10;Company: Northwind Labs&#10;Item: mug&#10;Design: cozy sunrise over pine mountains with a little fox — warm retro palette."
+              >Candidate: Maya Chen
+Company: Northwind Labs
+Item: mug
+Design: Cozy sunrise over pine mountains with a little fox — warm retro palette.</textarea>
+            </div>
+          </div>
+
+          <label class="stack-sm">
+            <span class="field-label">Candidate photo</span>
+            <div class="photo-row">
+              <input id="photo" type="file" accept="image/*" />
+              <span class="photo-name" id="photoName"></span>
+            </div>
+          </label>
+
+          <button type="button" class="btn-generate" id="btnGenerate">✨ Generate design</button>
+        </div>
+
+        <!-- RIGHT -->
+        <div class="preview-panel">
+          <div class="preview-head">
+            <div class="status-ready idle" id="statusLine">
+              <span class="dot"></span>
+              <span id="statusText">Waiting to generate</span>
+            </div>
+            <div class="product-label" id="productLabel">Ceramic mug · 11oz</div>
+          </div>
+
+          <div class="stage">
+            <div class="stage-tag">Model render</div>
+
+            <div id="fakePreview">
+              <div id="fakeMug" class="fake-mug">
+                <div class="handle"></div>
+                <div class="body"></div>
+                <div class="rim"></div>
+                <div class="inner"></div>
+                <div class="art">
+                  <div style="position:relative;width:108px;height:58px;">
+                    <div class="sun" style="width:27px;height:27px;"></div>
+                    <div class="hill-l" style="left:12px;width:46px;height:40px;background:#6a9a78;"></div>
+                    <div class="hill-r" style="right:8px;width:54px;height:47px;background:#3f6b52;"></div>
+                  </div>
+                  <div class="brand-text" style="font-size:15px;color:#33463b;" id="brandMarkMug">NORTHWIND</div>
+                  <div class="est" style="font-size:7.5px;color:#8a9a8f;">EST · 2026</div>
+                </div>
+              </div>
+              <div id="fakeShirt" class="fake-shirt hidden">
+                <div class="body"></div>
+                <div class="collar"></div>
+                <div class="art">
+                  <div style="position:relative;width:96px;height:52px;">
+                    <div class="sun" style="width:24px;height:24px;"></div>
+                    <div class="hill-l" style="left:11px;width:40px;height:35px;background:#9ec6a9;"></div>
+                    <div class="hill-r" style="right:6px;width:47px;height:41px;background:#cfe6d5;"></div>
+                  </div>
+                  <div class="brand-text" style="font-size:14px;color:#f4ead9;" id="brandMarkShirt">NORTHWIND</div>
+                  <div class="est" style="font-size:7px;color:#cbb9dd;">EST · 2026</div>
+                </div>
+              </div>
+              <div id="fakeHat" class="fake-hat hidden">
+                <div class="brim"></div>
+                <div class="crown"></div>
+                <div class="button"></div>
+                <div class="art">
+                  <div style="position:relative;width:78px;height:42px;">
+                    <div class="sun" style="width:20px;height:20px;"></div>
+                    <div class="hill-l" style="left:8px;width:34px;height:29px;background:#8fbf9c;"></div>
+                    <div class="hill-r" style="right:5px;width:40px;height:34px;background:#c9e4d1;"></div>
+                  </div>
+                  <div class="brand-text" style="font-size:12px;color:#f2ead9;" id="brandMarkHat">NORTHWIND</div>
+                </div>
+              </div>
+            </div>
+
+            <img id="mockupImg" class="mockup hidden" alt="Generated product mockup" />
+          </div>
+
+          <div class="bottom-row">
+            <div class="polaroid">
+              <div class="polaroid-img" id="tryonBox">
+                <span id="tryonPlaceholder">candidate photo<br />model output</span>
+                <img id="tryonImg" class="hidden" alt="Try-on preview" />
+              </div>
+              <div class="polaroid-caption" id="polaroidCaption">Maya's mug ☕</div>
+              <a id="linkedinLink" class="polaroid-link" href="https://linkedin.com/in/mayachen" target="_blank" rel="noopener">in/mayachen ↗</a>
+            </div>
+            <div class="actions">
+              <a id="printifyLink" class="printify-link disabled" href="#" target="_blank" rel="noopener">
+                <span class="printify-left">
+                  <span class="printify-badge">P</span>
+                  <span id="printifyText">Printify draft</span>
+                </span>
+                <span class="printify-open" id="printifyOpen">—</span>
+              </a>
+              <div class="action-btns">
+                <button type="button" class="btn-dl" id="btnDownload" disabled>⬇ Download</button>
+                <button type="button" class="btn-send" id="btnSend">✉ Send email</button>
+              </div>
+            </div>
+          </div>
+
+          <div id="toast" class="toast hidden"></div>
+        </div>
+      </div>
+    </div>
   </div>
 
   <script>
-    const form = document.getElementById("form");
-    const statusEl = document.getElementById("status");
-    const submitBtn = document.getElementById("submit");
-    const results = document.getElementById("results");
-    const layerResults = document.getElementById("layerResults");
-    const previewLabel = document.getElementById("previewLabel");
-    const layersLabel = document.getElementById("layersLabel");
+    const PRODUCT_META = {
+      mug: { noun: "mug", emoji: "☕", label: "Ceramic mug · 11oz", api: "mug" },
+      shirt: { noun: "tee", emoji: "👕", label: "Unisex tee · soft cotton", api: "tee" },
+      hat: { noun: "cap", emoji: "🧢", label: "Snapback · structured", api: "hat" },
+    };
 
-    function setLayer(imgId, dlId, dataUrl, filename) {
-      const card = document.getElementById(imgId.replace("Img", "Card"));
-      if (!dataUrl) {
-        if (card) card.hidden = true;
-        return;
-      }
-      if (card) card.hidden = false;
-      document.getElementById(imgId).src = dataUrl;
-      const dl = document.getElementById(dlId);
-      dl.href = dataUrl;
-      dl.download = filename || "layer.png";
+    const state = {
+      mode: "form",
+      candidates: [
+        { first: "Maya", last: "Chen", linkedin: "https://linkedin.com/in/mayachen" },
+        { first: "Devon", last: "Okafor", linkedin: "https://linkedin.com/in/devonokafor" },
+        { first: "Priya", last: "Nair", linkedin: "https://linkedin.com/in/priyanair" },
+      ],
+      fileName: "northwind_candidates.csv",
+      showDrop: false,
+      dragOver: false,
+      selectedIdx: 0,
+      product: "mug",
+      photoFile: null,
+      generating: false,
+      results: null,
+      productLabel: null,
+      blankColor: null,
+      toastTimer: null,
+    };
+
+    const el = {
+      lede: document.getElementById("lede"),
+      formMode: document.getElementById("formMode"),
+      describeMode: document.getElementById("describeMode"),
+      describeText: document.getElementById("describeText"),
+      tabForm: document.getElementById("tabForm"),
+      tabDescribe: document.getElementById("tabDescribe"),
+      dropzone: document.getElementById("dropzone"),
+      candidatesFile: document.getElementById("candidatesFile"),
+      fileLoaded: document.getElementById("fileLoaded"),
+      fileName: document.getElementById("fileName"),
+      candidateCount: document.getElementById("candidateCount"),
+      candidateSelect: document.getElementById("candidateSelect"),
+      btnReplace: document.getElementById("btnReplace"),
+      company: document.getElementById("company"),
+      prompt: document.getElementById("prompt"),
+      pills: document.getElementById("pills"),
+      photo: document.getElementById("photo"),
+      photoName: document.getElementById("photoName"),
+      btnGenerate: document.getElementById("btnGenerate"),
+      statusLine: document.getElementById("statusLine"),
+      statusText: document.getElementById("statusText"),
+      productLabel: document.getElementById("productLabel"),
+      fakePreview: document.getElementById("fakePreview"),
+      fakeMug: document.getElementById("fakeMug"),
+      fakeShirt: document.getElementById("fakeShirt"),
+      fakeHat: document.getElementById("fakeHat"),
+      mockupImg: document.getElementById("mockupImg"),
+      tryonPlaceholder: document.getElementById("tryonPlaceholder"),
+      tryonImg: document.getElementById("tryonImg"),
+      polaroidCaption: document.getElementById("polaroidCaption"),
+      linkedinLink: document.getElementById("linkedinLink"),
+      printifyLink: document.getElementById("printifyLink"),
+      printifyText: document.getElementById("printifyText"),
+      printifyOpen: document.getElementById("printifyOpen"),
+      btnDownload: document.getElementById("btnDownload"),
+      btnSend: document.getElementById("btnSend"),
+      toast: document.getElementById("toast"),
+      brandMarkMug: document.getElementById("brandMarkMug"),
+      brandMarkShirt: document.getElementById("brandMarkShirt"),
+      brandMarkHat: document.getElementById("brandMarkHat"),
+    };
+
+    function brandMark(companyName) {
+      const source = companyName != null ? companyName : el.company.value;
+      const first = (String(source || "").trim().split(/\s+/)[0] || "BRAND").toUpperCase();
+      return first;
     }
 
-    form.addEventListener("submit", async (event) => {
-      event.preventDefault();
-      results.classList.remove("show");
-      layerResults.classList.remove("show");
-      previewLabel.classList.remove("show");
-      layersLabel.classList.remove("show");
-      document.getElementById("printifyBox").classList.remove("show");
-      document.getElementById("reviewBox").classList.remove("show");
-      statusEl.className = "status";
-      statusEl.textContent =
-        "Generating… may take several minutes (print art, brand review/redo loop, mockup, try-on, Printify). Watch the terminal for step logs.";
-      submitBtn.disabled = true;
+    function splitName(full) {
+      const parts = String(full || "").trim().split(/\s+/).filter(Boolean);
+      if (!parts.length) return { first: "", last: "" };
+      if (parts.length === 1) return { first: parts[0], last: "" };
+      return { first: parts[0], last: parts.slice(1).join(" ") };
+    }
+
+    function normalizeProductKey(raw) {
+      const key = String(raw || "").trim().toLowerCase();
+      if (!key) return null;
+      if (/^(mug|cup|coffee\s*mug)$/.test(key)) return "mug";
+      if (/^(shirt|tee|t-?shirt|jersey)$/.test(key)) return "shirt";
+      if (/^(hat|cap|snapback|baseball\s*cap)$/.test(key)) return "hat";
+      if (key.includes("mug") || key.includes("cup")) return "mug";
+      if (key.includes("shirt") || key.includes("tee") || key.includes("jersey")) return "shirt";
+      if (key.includes("hat") || key.includes("cap")) return "hat";
+      return null;
+    }
+
+    function extractLabeled(text, labels) {
+      const labelPart = labels.join("|");
+      const re = new RegExp(
+        `(?:^|\\n)\\s*(?:${labelPart})\\s*[:\\-–—]\\s*(.+?)(?=\\n\\s*(?:candidate|name|person|recipient|company|brand|org(?:anization)?|item|product|type|merch|design|prompt|wish|brief|linkedin)\\s*[:\\-–—]|$)`,
+        "is"
+      );
+      const match = text.match(re);
+      return match ? match[1].trim() : "";
+    }
+
+    function parseDescribeText(raw) {
+      const text = String(raw || "").trim();
+      if (!text) {
+        return { error: "Describe the gift in the text box first." };
+      }
+
+      let linkedin = "";
+      const liMatch = text.match(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/\S+/i);
+      if (liMatch) linkedin = liMatch[0].replace(/[.,);]+$/, "");
+
+      let candidate = extractLabeled(text, ["candidate", "name", "person", "recipient"]);
+      let company = extractLabeled(text, ["company", "brand", "organization", "org"]);
+      let productRaw = extractLabeled(text, ["item", "product", "type", "merch"]);
+      let design = extractLabeled(text, ["design", "prompt", "wish", "brief"]);
+
+      // Freeform fallback: detect product keyword anywhere
+      let product = normalizeProductKey(productRaw);
+      if (!product) {
+        const freeProduct = text.match(/\b(mug|coffee\s*mug|cup|shirt|t-?shirt|tee|jersey|hat|cap|snapback)\b/i);
+        if (freeProduct) product = normalizeProductKey(freeProduct[1]);
+      }
+
+      // If no labeled candidate, take first non-label line as name
+      if (!candidate) {
+        const firstLine = text.split(/\n/).map((l) => l.trim()).find((l) => {
+          if (!l) return false;
+          if (/^(candidate|name|person|recipient|company|brand|org|item|product|type|merch|design|prompt|wish|brief|linkedin)\s*[:\-–—]/i.test(l)) return false;
+          if (/linkedin\.com/i.test(l) && l.split(/\s+/).length <= 2) return false;
+          return true;
+        });
+        if (firstLine) {
+          candidate = firstLine
+            .replace(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/\S+/gi, "")
+            .replace(/\b(mug|shirt|tee|t-shirt|hat|cap)\b/gi, "")
+            .replace(/[|,;]+/g, " ")
+            .replace(/\s+/g, " ")
+            .trim();
+        }
+      }
+
+      if (!design) {
+        // Use remaining prose after stripping labeled lines / product words as design wish
+        design = text
+          .split(/\n/)
+          .map((l) => l.trim())
+          .filter((l) => {
+            if (!l) return false;
+            if (/^(candidate|name|person|recipient|company|brand|org(?:anization)?|item|product|type|merch|design|prompt|wish|brief|linkedin)\s*[:\-–—]/i.test(l)) return false;
+            return true;
+          })
+          .join(" ")
+          .replace(/(?:https?:\/\/)?(?:www\.)?linkedin\.com\/\S+/gi, "")
+          .trim();
+        // If design collapsed to just the candidate/company, clear it
+        if (candidate && design.toLowerCase() === candidate.toLowerCase()) design = "";
+        if (company && design.toLowerCase() === company.toLowerCase()) design = "";
+      }
+
+      if (!candidate) {
+        return { error: "Include the candidate name (e.g. Candidate: Maya Chen)." };
+      }
+      if (!company) {
+        return { error: "Include the company (e.g. Company: Northwind Labs)." };
+      }
+      if (!product) {
+        return { error: "Include the item type: mug, shirt, or hat." };
+      }
+      if (!design) {
+        return { error: "Include your design wish (e.g. Design: cozy sunrise…)." };
+      }
+
+      const { first, last } = splitName(candidate);
+      return {
+        company,
+        product,
+        design,
+        candidates: [{ first, last, linkedin }],
+      };
+    }
+
+    function currentCandidate() {
+      return state.candidates[state.selectedIdx] || { first: "your candidate", last: "", linkedin: "" };
+    }
+
+    function linkedinHandle(cand) {
+      return (cand.linkedin || "").replace(/\/+$/, "").split("/").pop()
+        || (cand.first + cand.last).toLowerCase();
+    }
+
+    function currentResult() {
+      if (!state.results || !state.results.length) return null;
+      const cand = currentCandidate();
+      const match = state.results.find((r) => {
+        const first = (r.first_name || "").toLowerCase();
+        const last = (r.last_name || "").toLowerCase();
+        return first === cand.first.toLowerCase() && last === cand.last.toLowerCase();
+      });
+      return match || state.results[Math.min(state.selectedIdx, state.results.length - 1)];
+    }
+
+    function flash(msg, { sticky = false, ms = 2600 } = {}) {
+      el.toast.textContent = msg;
+      el.toast.classList.remove("hidden");
+      el.toast.classList.toggle("sticky", sticky);
+      clearTimeout(state.toastTimer);
+      if (!sticky) {
+        state.toastTimer = setTimeout(() => {
+          el.toast.classList.add("hidden");
+          el.toast.classList.remove("sticky");
+        }, ms);
+      }
+    }
+
+    function clearToast() {
+      clearTimeout(state.toastTimer);
+      el.toast.classList.add("hidden");
+      el.toast.classList.remove("sticky");
+    }
+
+    function parseCSV(text) {
+      return text.split(/\r?\n/).filter((l) => l.trim()).map((line) => {
+        const out = [];
+        let cur = "";
+        let q = false;
+        for (let i = 0; i < line.length; i++) {
+          const c = line[i];
+          if (c === '"') { q = !q; continue; }
+          if (c === "," && !q) { out.push(cur); cur = ""; continue; }
+          cur += c;
+        }
+        out.push(cur);
+        return out.map((s) => s.trim());
+      });
+    }
+
+    function rowsToCandidates(rows) {
+      const out = [];
+      for (let i = 0; i < rows.length; i++) {
+        const r = rows[i];
+        if (!r) continue;
+        const first = (r[0] == null ? "" : String(r[0])).trim();
+        const last = (r[1] == null ? "" : String(r[1])).trim();
+        const linkedin = (r[2] == null ? "" : String(r[2])).trim();
+        if (i === 0 && /first[_\s:]*name/i.test(first)) continue;
+        if (!first && !last) continue;
+        out.push({ first, last, linkedin });
+      }
+      return out;
+    }
+
+    async function handleFile(file) {
+      if (!file) return;
+      try {
+        const name = file.name.toLowerCase();
+        let rows = [];
+        if (name.endsWith(".csv")) {
+          rows = parseCSV(await file.text());
+        } else if (window.XLSX) {
+          const wb = window.XLSX.read(await file.arrayBuffer(), { type: "array" });
+          const ws = wb.Sheets[wb.SheetNames[0]];
+          rows = window.XLSX.utils.sheet_to_json(ws, { header: 1 });
+        } else {
+          flash("Excel support still loading — try again");
+          return;
+        }
+        const cands = rowsToCandidates(rows);
+        if (!cands.length) {
+          flash("No candidates found — check the columns");
+          return;
+        }
+        state.candidates = cands;
+        state.fileName = file.name;
+        state.showDrop = false;
+        state.selectedIdx = 0;
+        state.dragOver = false;
+        state.results = null;
+        render();
+      } catch (e) {
+        flash("Could not read that file");
+      }
+    }
+
+    function buildCandidatesText() {
+      return state.candidates
+        .map((c) => {
+          const name = `${c.first} ${c.last}`.trim();
+          return c.linkedin ? `${name} ${c.linkedin}` : name;
+        })
+        .join("\n");
+    }
+
+    function setPrintify(result) {
+      el.printifyLink.classList.remove("disabled", "error");
+      if (result && result.printify && result.printify.dashboard_url) {
+        el.printifyLink.href = result.printify.dashboard_url;
+        el.printifyText.textContent = "Pushed to Printify";
+        el.printifyOpen.textContent = "Open ↗";
+        return;
+      }
+      if (result && result.printify_error) {
+        el.printifyLink.href = "#";
+        el.printifyLink.classList.add("error");
+        el.printifyText.textContent = "Printify failed";
+        el.printifyOpen.textContent = "—";
+        return;
+      }
+      el.printifyLink.href = "#";
+      el.printifyLink.classList.add("disabled");
+      el.printifyText.textContent = "Printify draft";
+      el.printifyOpen.textContent = "—";
+    }
+
+    function render() {
+      const meta = PRODUCT_META[state.product];
+      const cand = currentCandidate();
+      const result = currentResult();
+      const hasFile = !state.showDrop && state.candidates.length > 0;
+
+      const isDescribe = state.mode === "describe";
+      el.formMode.classList.toggle("hidden", isDescribe);
+      el.describeMode.classList.toggle("hidden", !isDescribe);
+      el.tabForm.classList.toggle("active", !isDescribe);
+      el.tabDescribe.classList.toggle("active", isDescribe);
+      el.lede.textContent = isDescribe
+        ? "Describe the gift in plain text — we parse name, company, item, and design wish."
+        : "Upload your shortlist — we design a keepsake for each candidate.";
+
+      let companyForMark = el.company.value;
+      if (isDescribe) {
+        const preview = parseDescribeText(el.describeText.value);
+        if (!preview.error) {
+          companyForMark = preview.company;
+          // Live-preview product from text without wiping form-mode product permanently
+          // until generate — still update visual product for the CSS mockup
+          if (preview.product) state.product = preview.product;
+          if (preview.candidates && preview.candidates.length) {
+            // Soft preview only in describe mode for polaroid caption
+            state._describePreview = preview.candidates[0];
+          }
+        }
+      } else {
+        state._describePreview = null;
+      }
+
+      const displayCand = state._describePreview || cand;
+      const mark = brandMark(companyForMark);
+      const displayMeta = PRODUCT_META[state.product];
+
+      el.dropzone.classList.toggle("hidden", hasFile);
+      el.dropzone.classList.toggle("drag", state.dragOver);
+      el.fileLoaded.classList.toggle("hidden", !hasFile);
+
+      if (hasFile) {
+        el.fileName.textContent = state.fileName || "candidates.csv";
+        el.candidateCount.textContent = `${state.candidates.length} candidate${state.candidates.length === 1 ? "" : "s"} loaded`;
+        el.candidateSelect.innerHTML = state.candidates
+          .map((c, i) => `<option value="${i}"${i === state.selectedIdx ? " selected" : ""}>${escapeHtml(c.first)} ${escapeHtml(c.last)}</option>`)
+          .join("");
+      }
+
+      el.pills.querySelectorAll(".pill").forEach((btn) => {
+        btn.classList.toggle("active", btn.dataset.product === state.product);
+      });
+
+      el.productLabel.textContent = state.productLabel || displayMeta.label;
+      el.brandMarkMug.textContent = mark;
+      el.brandMarkShirt.textContent = mark;
+      el.brandMarkHat.textContent = mark;
+
+      el.fakeMug.classList.toggle("hidden", state.product !== "mug");
+      el.fakeShirt.classList.toggle("hidden", state.product !== "shirt");
+      el.fakeHat.classList.toggle("hidden", state.product !== "hat");
+
+      const handle = linkedinHandle(displayCand);
+      el.polaroidCaption.textContent = `${displayCand.first}'s ${displayMeta.noun} ${displayMeta.emoji}`;
+      el.linkedinLink.href = displayCand.linkedin || "#";
+      el.linkedinLink.textContent = `in/${handle} ↗`;
+
+      if (result && result.jersey_png) {
+        el.fakePreview.classList.add("hidden");
+        el.mockupImg.classList.remove("hidden");
+        el.mockupImg.src = result.jersey_png;
+      } else {
+        el.fakePreview.classList.remove("hidden");
+        el.mockupImg.classList.add("hidden");
+        el.mockupImg.removeAttribute("src");
+      }
+
+      if (result && result.tryon_png) {
+        el.tryonPlaceholder.classList.add("hidden");
+        el.tryonImg.classList.remove("hidden");
+        el.tryonImg.src = result.tryon_png;
+      } else {
+        el.tryonPlaceholder.classList.remove("hidden");
+        el.tryonImg.classList.add("hidden");
+        el.tryonImg.removeAttribute("src");
+      }
+
+      setPrintify(result);
+      el.btnDownload.disabled = !(result && result.jersey_png);
+      el.btnGenerate.disabled = state.generating;
+
+      if (state.generating) {
+        el.statusLine.className = "status-ready busy";
+        el.statusText.textContent = `Generating for ${displayCand.first}…`;
+      } else if (result && result.jersey_png) {
+        el.statusLine.className = "status-ready";
+        el.statusText.textContent = `Design ready for ${displayCand.first}`;
+      } else {
+        el.statusLine.className = "status-ready idle";
+        el.statusText.textContent = `Preview for ${displayCand.first}`;
+      }
+
+      el.photoName.textContent = state.photoFile ? state.photoFile.name : "";
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function downloadDataUrl(dataUrl, filename) {
+      const a = document.createElement("a");
+      a.href = dataUrl;
+      a.download = filename || "download.png";
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    }
+
+    async function onGenerate() {
+      if (state.generating) return;
+
+      let company;
+      let designPrompt;
+      let productKey;
+      let candidatesText;
+
+      if (state.mode === "describe") {
+        const parsed = parseDescribeText(el.describeText.value);
+        if (parsed.error) {
+          flash(parsed.error);
+          return;
+        }
+        company = parsed.company;
+        designPrompt = parsed.design;
+        productKey = parsed.product;
+        state.product = productKey;
+        state.candidates = parsed.candidates;
+        state.selectedIdx = 0;
+        state.fileName = "described.txt";
+        state.showDrop = false;
+        candidatesText = buildCandidatesText();
+      } else {
+        company = el.company.value.trim();
+        designPrompt = el.prompt.value.trim();
+        productKey = state.product;
+        if (!company) {
+          flash("Company name is required");
+          return;
+        }
+        if (!state.candidates.length) {
+          flash("Load candidates first");
+          return;
+        }
+        candidatesText = buildCandidatesText();
+      }
+
+      if (!state.photoFile) {
+        flash("Upload a candidate photo first");
+        return;
+      }
+
+      const meta = PRODUCT_META[productKey];
+      state.generating = true;
+      state.results = null;
+      render();
+      flash(
+        `Generating designs for ${state.candidates.length} candidate${state.candidates.length === 1 ? "" : "s"}… this can take several minutes.`,
+        { sticky: true }
+      );
 
       try {
-        const body = new FormData(form);
+        const body = new FormData();
+        body.append("company_name", company);
+        body.append("design_prompt", designPrompt);
+        body.append("product_type", meta.api);
+        body.append("candidates_text", candidatesText);
+        body.append("photo", state.photoFile, state.photoFile.name);
+
         const res = await fetch("/generate", { method: "POST", body });
         const data = await res.json().catch(() => ({}));
 
@@ -496,92 +1461,138 @@
           throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
         }
 
-        const label = data.product_label || data.product_type || "Product";
-        document.getElementById("mockupCaption").textContent = `${label} mockup`;
-        document.getElementById("tryonCaption").textContent =
-          data.product_type === "mug" ? "Holding mug" :
-          data.product_type === "hat" ? "Wearing hat" : "Wearing jersey";
+        const people = Array.isArray(data.candidates) && data.candidates.length
+          ? data.candidates
+          : [data];
 
-        document.getElementById("jerseyImg").src = data.jersey_png;
-        document.getElementById("tryonImg").src = data.tryon_png;
+        state.results = people;
+        state.productLabel = data.product_label || meta.label;
+        state.blankColor = data.blank_color || data.shirt_color || null;
+        state.selectedIdx = Math.min(state.selectedIdx, people.length - 1);
 
-        const jerseyDl = document.getElementById("jerseyDl");
-        const tryonDl = document.getElementById("tryonDl");
-        jerseyDl.href = data.jersey_png;
-        tryonDl.href = data.tryon_png;
-        jerseyDl.download = data.jersey_filename || "mockup.png";
-        tryonDl.download = data.tryon_filename || "tryon.png";
-
-        const layers = data.layers || {};
-        setLayer("frontImg", "frontDl", layers.front_png, layers.front_filename);
-        setLayer("backImg", "backDl", layers.back_png, layers.back_filename);
-        setLayer("sleeveImg", "sleeveDl", layers.sleeve_png, layers.sleeve_filename);
-        setLayer("neckImg", "neckDl", layers.neck_png, layers.neck_filename);
-
-        previewLabel.classList.add("show");
-        results.classList.add("show");
-        if (layers.front_png) {
-          layersLabel.classList.add("show");
-          layerResults.classList.add("show");
-        }
-        statusEl.className = "status ok";
-        const color = data.blank_color || data.shirt_color;
-        statusEl.textContent = color
-          ? `Done — ${label}, color ${color}. Download the PNGs below.`
-          : `Done — ${label}. Download the PNGs below.`;
-
-        const reviewBox = document.getElementById("reviewBox");
-        const reviewBadge = document.getElementById("reviewBadge");
-        const reviewMsg = document.getElementById("reviewMsg");
-        const review = data.review || null;
-        if (review) {
-          reviewBox.classList.add("show");
-          const approved = review.decision === "approve";
-          reviewBadge.className = "badge" + (approved ? " ok" : "");
-          reviewBadge.textContent = approved
-            ? `Approved · attempt ${review.attempts}/${review.max_attempts}`
-            : `Best effort · ${review.attempts}/${review.max_attempts} attempts`;
-          const latest = review.latest || {};
-          const bits = [];
-          if (typeof latest.score === "number") bits.push(`Score ${latest.score}/10`);
-          if (latest.brand_alignment) bits.push(latest.brand_alignment);
-          if (latest.prompt_alignment) bits.push(latest.prompt_alignment);
-          if (Array.isArray(latest.issues) && latest.issues.length) {
-            bits.push("Issues: " + latest.issues.join("; "));
-          }
-          if (!approved && latest.redo_instructions) {
-            bits.push("Last redo notes: " + latest.redo_instructions);
-          }
-          if (review.attempts > 1) {
-            bits.push(`Redid design ${review.attempts - 1} time(s) after critic feedback.`);
-          }
-          reviewMsg.textContent = bits.join(" — ") || "Review completed.";
-        }
-
-        const printifyBox = document.getElementById("printifyBox");
-        const printifyMsg = document.getElementById("printifyMsg");
-        const printifyLink = document.getElementById("printifyLink");
-        printifyBox.classList.add("show");
-        if (data.printify) {
-          const positions = (data.printify.positions || []).join(", ") || "front";
-          const pColor = data.printify.blank_color || data.printify.shirt_color || color;
-          const colorPart = pColor ? `; color: ${pColor}` : "";
-          printifyMsg.textContent =
-            `Draft “${data.printify.title}” created (${data.printify.variant_count} variants${colorPart}; positions: ${positions}). Ready for future ordering.`;
-          printifyLink.hidden = false;
-          printifyLink.href = data.printify.dashboard_url;
-        } else {
-          printifyLink.hidden = true;
-          printifyMsg.textContent =
-            data.printify_error || "Printify draft was not created.";
-        }
+        clearToast();
+        const colorBit = state.blankColor ? ` · ${state.blankColor}` : "";
+        flash(`Done — ${people.length} design${people.length === 1 ? "" : "s"}${colorBit} ✓`, { ms: 4000 });
       } catch (err) {
-        statusEl.className = "status error";
-        statusEl.textContent = err.message || String(err);
+        const msg = err && err.message ? err.message : String(err);
+        const friendly = /failed to fetch|networkerror|load failed/i.test(msg)
+          ? "Connection lost while generating (server may have restarted). Keep this tab open and try again — runs can take several minutes."
+          : msg;
+        flash(friendly, { ms: 5000 });
       } finally {
-        submitBtn.disabled = false;
+        state.generating = false;
+        render();
+      }
+    }
+
+    // —— events ——
+    function setMode(mode) {
+      state.mode = mode === "describe" ? "describe" : "form";
+      state.results = null;
+      state.productLabel = null;
+      render();
+    }
+
+    el.tabForm.addEventListener("click", () => setMode("form"));
+    el.tabDescribe.addEventListener("click", () => setMode("describe"));
+    el.describeText.addEventListener("input", () => {
+      if (state.mode === "describe") render();
+    });
+
+    el.candidatesFile.addEventListener("change", (e) => {
+      handleFile(e.target.files && e.target.files[0]);
+      e.target.value = "";
+    });
+
+    el.dropzone.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      if (!state.dragOver) {
+        state.dragOver = true;
+        el.dropzone.classList.add("drag");
       }
     });
+    el.dropzone.addEventListener("dragleave", (e) => {
+      e.preventDefault();
+      state.dragOver = false;
+      el.dropzone.classList.remove("drag");
+    });
+    el.dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      state.dragOver = false;
+      el.dropzone.classList.remove("drag");
+      handleFile(e.dataTransfer.files && e.dataTransfer.files[0]);
+    });
+
+    el.btnReplace.addEventListener("click", () => {
+      state.showDrop = true;
+      state.results = null;
+      render();
+    });
+
+    el.candidateSelect.addEventListener("change", (e) => {
+      state.selectedIdx = parseInt(e.target.value, 10) || 0;
+      render();
+    });
+
+    el.company.addEventListener("input", () => render());
+
+    el.pills.addEventListener("click", (e) => {
+      const btn = e.target.closest(".pill");
+      if (!btn) return;
+      state.product = btn.dataset.product;
+      state.results = null;
+      state.productLabel = null;
+      render();
+    });
+
+    el.photo.addEventListener("change", (e) => {
+      state.photoFile = (e.target.files && e.target.files[0]) || null;
+      render();
+    });
+
+    el.btnGenerate.addEventListener("click", onGenerate);
+
+    el.btnDownload.addEventListener("click", () => {
+      const result = currentResult();
+      const cand = currentCandidate();
+      const meta = PRODUCT_META[state.product];
+      if (!result || !result.jersey_png) {
+        flash("Generate a design first");
+        return;
+      }
+      downloadDataUrl(
+        result.jersey_png,
+        result.jersey_filename || `${cand.first}-${meta.noun}-mockup.png`
+      );
+      if (result.tryon_png) {
+        setTimeout(() => {
+          downloadDataUrl(
+            result.tryon_png,
+            result.tryon_filename || `${cand.first}-${meta.noun}-tryon.png`
+          );
+        }, 200);
+      }
+      flash(`Downloaded ${cand.first}'s ${meta.noun} image ✓`);
+    });
+
+    el.btnSend.addEventListener("click", () => {
+      const cand = currentCandidate();
+      flash(`Emailed to ${cand.first} ✓`);
+    });
+
+    el.printifyLink.addEventListener("click", (e) => {
+      if (el.printifyLink.classList.contains("disabled") || el.printifyLink.classList.contains("error")) {
+        e.preventDefault();
+        const result = currentResult();
+        if (result && result.printify_error) {
+          flash(result.printify_error, { ms: 4000 });
+        } else {
+          flash("Generate a design to push a Printify draft");
+        }
+      }
+    });
+
+    render();
   </script>
 </body>
 </html>

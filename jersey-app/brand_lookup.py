@@ -13,12 +13,14 @@ import asyncio
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 import httpx
 
@@ -357,6 +359,206 @@ async def lookup_brand(company_name: str) -> BrandProfile | None:
     return None
 
 
+def _parse_hex(hex_val: str) -> tuple[int, int, int] | None:
+    raw = hex_val.strip().lstrip("#")
+    if len(raw) == 3:
+        raw = "".join(ch * 2 for ch in raw)
+    if len(raw) != 6:
+        return None
+    try:
+        return int(raw[0:2], 16), int(raw[2:4], 16), int(raw[4:6], 16)
+    except ValueError:
+        return None
+
+
+def _is_near_neutral(hex_val: str) -> bool:
+    """True for near-black, near-white, or low-chroma grays — useless print accents."""
+    rgb = _parse_hex(hex_val)
+    if not rgb:
+        return True
+    r, g, b = rgb
+    chroma = (max(r, g, b) - min(r, g, b)) / 255.0
+    if chroma < 0.14:
+        return True
+    luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255.0
+    return luminance < 0.08 or luminance > 0.92
+
+
+def chromatic_hexes(hexes: list[str]) -> list[str]:
+    """Brand colors that are actually usable as print accents (not pure neutrals)."""
+    return [h for h in hexes if not _is_near_neutral(h)]
+
+
+def palette_needs_enrichment(hexes: list[str]) -> bool:
+    """Brand.dev often returns only a near-black logo ink — treat that as missing."""
+    return len(chromatic_hexes(hexes)) == 0
+
+
+def _normalize_hex(raw: str) -> str | None:
+    h = raw.strip().lstrip("#")
+    if len(h) == 3:
+        h = "".join(ch * 2 for ch in h)
+    if len(h) != 6:
+        return None
+    try:
+        int(h, 16)
+    except ValueError:
+        return None
+    return f"#{h.lower()}"
+
+
+def _guess_domain(company_name: str, brand: BrandProfile | None) -> str | None:
+    if brand and brand.domain:
+        return brand.domain.strip().lower().lstrip(".")
+    # Very light heuristic — only for enrichment, never authoritative.
+    slug = re.sub(r"[^a-z0-9]+", "", company_name.strip().lower())
+    if len(slug) >= 3:
+        return f"{slug}.com"
+    return None
+
+
+async def _colors_from_website(domain: str) -> list[str]:
+    """Scrape homepage + linked CSS for frequent chromatic hexes."""
+    base = f"https://{domain}"
+    counts: Counter[str] = Counter()
+
+    async with httpx.AsyncClient(timeout=25.0, follow_redirects=True) as client:
+        try:
+            home = await client.get(base)
+        except Exception:
+            log.exception("website color scrape failed for %s", domain)
+            return []
+        if home.status_code >= 400 or not home.text:
+            return []
+
+        html = home.text
+        for match in re.findall(r"#[0-9A-Fa-f]{3,6}\b", html):
+            norm = _normalize_hex(match)
+            if norm and not _is_near_neutral(norm):
+                counts[norm] += 1
+
+        hrefs = re.findall(
+            r'(?:href|src)=["\']([^"\']+\.css[^"\']*)["\']',
+            html,
+            flags=re.IGNORECASE,
+        )
+        # Prefer same-origin stylesheets; cap requests.
+        seen: set[str] = set()
+        for href in hrefs:
+            url = urljoin(base + "/", href)
+            if url in seen:
+                continue
+            seen.add(url)
+            if len(seen) > 6:
+                break
+            try:
+                css = await client.get(url)
+            except Exception:
+                continue
+            if css.status_code >= 400 or not css.text:
+                continue
+            for match in re.findall(r"#[0-9A-Fa-f]{6}\b", css.text):
+                norm = _normalize_hex(match)
+                if norm and not _is_near_neutral(norm):
+                    counts[norm] += 1
+
+    if not counts:
+        return []
+    # Prefer frequently used accents; keep top distinct hues.
+    ranked = [hex_val for hex_val, _ in counts.most_common(24)]
+    log.info(
+        "website palette domain=%s top=%s",
+        domain,
+        [(h, counts[h]) for h in ranked[:8]],
+    )
+    return ranked[:8]
+
+
+async def enrich_brand_colors(company_name: str, brand: BrandProfile | None) -> BrandProfile | None:
+    """Fill in real brand palette when Brand.dev/Zero only have neutrals.
+
+    Prefer scraping the company website CSS (deterministic). Fall back to
+    OpenRouter web search. Never accept an all-gray enrichment result.
+    """
+    if brand and not palette_needs_enrichment(brand.color_hexes):
+        return brand
+
+    name = (company_name or (brand.title if brand else "") or "").strip()
+    if len(name) < 3:
+        return brand
+
+    useful: list[str] = []
+    source_note = ""
+
+    domain = _guess_domain(name, brand)
+    if domain:
+        useful = await _colors_from_website(domain)
+        if useful:
+            source_note = f"website:{domain}"
+
+    if not useful:
+        try:
+            from openrouter_chat import chat_json_web
+
+            domain_hint = f" ({domain})" if domain else ""
+            data = await chat_json_web(
+                system=(
+                    "You are a brand identity researcher. Search the web for the company's "
+                    "real visual identity (website CSS, press kit, app UI). "
+                    "Return ONLY saturated chromatic brand accents as hex codes "
+                    "(purple, violet, blue, teal, green, red, orange, pink, etc.). "
+                    "NEVER return black, white, gray, charcoal, off-white, cream, or "
+                    "metallic gold unless the brand is literally monochrome gold. "
+                    "Respond with JSON only."
+                ),
+                user=(
+                    f'Company: "{name}"{domain_hint}\n'
+                    "Brand.dev only returned near-black/neutral hexes — ignore those.\n"
+                    "Search the live website and brand pages, then return JSON:\n"
+                    "{\n"
+                    '  "colors": ["#RRGGBB", "..."],\n'
+                    '  "notes": "<one short sentence naming the source>"\n'
+                    "}"
+                ),
+                timeout=90.0,
+            )
+            enriched = _hexes_from_colors(data.get("colors"))
+            useful = chromatic_hexes(enriched)
+            source_note = str(data.get("notes") or "web-search").strip()
+        except Exception:
+            log.exception("brand color enrichment (web search) failed for %r", name)
+            return brand
+
+    useful = chromatic_hexes(useful)
+    if not useful:
+        log.info("brand color enrichment found no chromatic hexes for %r", name)
+        return brand
+
+    log.info(
+        "brand colors enriched for %r → %s (%s)",
+        name,
+        useful,
+        source_note or "no notes",
+    )
+
+    if brand is None:
+        return BrandProfile(
+            title=name,
+            domain=domain or "",
+            color_hexes=useful[:8],
+            source="web-enrichment",
+        )
+
+    merged: list[str] = []
+    for hex_val in useful + brand.color_hexes:
+        if hex_val not in merged:
+            merged.append(hex_val)
+    brand.color_hexes = merged[:8]
+    if brand.source and "enriched" not in brand.source and "+web" not in brand.source:
+        brand.source = f"{brand.source}+web"
+    return brand
+
+
 def brand_prompt_guidance(
     brand: BrandProfile | None,
     *,
@@ -366,7 +568,9 @@ def brand_prompt_guidance(
     if not brand or not brand.has_visual_cues:
         return (
             "Infer a cohesive brand crest or wordmark (colors, typography, motifs) "
-            "from the company name."
+            "from the company name. Use that company's real public brand colors — "
+            "do NOT invent gold, metallic foil, or cream accents unless they are "
+            "part of the real brand."
         )
 
     parts: list[str] = []
@@ -375,20 +579,31 @@ def brand_prompt_guidance(
         parts.append(f"Official brand for {label} ({brand.domain}).")
     else:
         parts.append(f"Official brand for {label}.")
-    if brand.color_hexes:
-        parts.append(f"Primary brand colors: {', '.join(brand.color_hexes)}.")
+
+    accents = chromatic_hexes(brand.color_hexes)
+    if accents:
+        parts.append(
+            f"MANDATORY print ink palette (use these hexes as the dominant colors): "
+            f"{', '.join(accents)}. Do not substitute gold, brass, metallic yellow, "
+            f"cream, or other invented accents."
+        )
+    elif brand.color_hexes:
+        parts.append(f"Known brand colors: {', '.join(brand.color_hexes)}.")
+
     if brand.slogan:
         parts.append(f'Brand line: "{brand.slogan}".')
     if has_logo_ref:
         parts.append(
-            "The first reference image is the real company logo — use it as the exact "
-            "mark (shape, lettering, colors). Adapt into athletic jersey print artwork; "
-            "do not invent a different logo."
+            "The first reference image is the real company logo — preserve its exact "
+            "shape and lettering. If the reference is monochrome/dark, RECOLOR it using "
+            "the mandatory brand ink palette above (do not keep it black-on-black and "
+            "do not invent gold). Adapt into athletic jersey print artwork; do not invent "
+            "a different logo mark."
         )
     else:
         parts.append(
             "Match the company's real visual identity as closely as possible from these "
-            "brand details; do not invent unrelated motifs."
+            "brand details; do not invent unrelated motifs or color schemes."
         )
     return " ".join(parts)
 
