@@ -139,18 +139,20 @@ def _ink_guidance(
     brand: BrandProfile | None = None,
 ) -> str:
     accents = chromatic_hexes(brand.color_hexes) if brand else []
-    accent_bit = (
-        f" Prefer these brand accent hexes as the colorful inks: {', '.join(accents)}."
-        if accents
-        else ""
-    )
+    if accents:
+        listed = ", ".join(accents)
+        lock = (
+            f" COLOR LOCK: every colored pixel of ink MUST be one of [{listed}] "
+            f"(exact hexes). No gold, brass, cream, orange, or off-palette hues."
+        )
+    else:
+        lock = ""
     if _shirt_is_dark(blank_color, ink_hint):
         if accents:
             return (
                 f"The blank product is {blank_color} (dark / saturated). Use high-contrast "
-                f"ink from the brand palette (plus white for highlights if needed) so the "
-                f"print reads clearly on {blank_color}.{accent_bit} Do not invent gold, "
-                f"brass, or cream metallic accents."
+                f"ink from the locked brand hexes (plus white for highlights if needed) so "
+                f"the print reads clearly on {blank_color}.{lock}"
             )
         return (
             f"The blank product is {blank_color} (dark / saturated). Use light / high-contrast "
@@ -160,7 +162,7 @@ def _ink_guidance(
     if accents:
         return (
             f"The blank product is {blank_color} (light / pale). Use dark / high-contrast ink "
-            f"from the brand palette so the print reads clearly on {blank_color}.{accent_bit}"
+            f"from the locked brand hexes so the print reads clearly on {blank_color}.{lock}"
         )
     return (
         f"The blank product is {blank_color} (light / pale). Use dark / high-contrast ink "
@@ -174,6 +176,7 @@ def _print_art_rules(
     *,
     brand: BrandProfile | None = None,
 ) -> str:
+    accents = chromatic_hexes(brand.color_hexes) if brand else []
     contrast = (
         _ink_guidance(blank_color, ink_hint, brand=brand)
         if blank_color
@@ -181,12 +184,19 @@ def _print_art_rules(
             "Design for a white ceramic mug — use saturated, high-contrast colors that read "
             "clearly on white."
             + (
-                f" Prefer brand accent hexes: {', '.join(chromatic_hexes(brand.color_hexes))}."
-                if brand and chromatic_hexes(brand.color_hexes)
+                f" COLOR LOCK: only these brand hexes for all colored ink: "
+                f"{', '.join(accents)}. No gold/brass/cream/off-palette accents."
+                if accents
                 else ""
             )
         )
     )
+    color_fail = ""
+    if accents:
+        color_fail = (
+            f" FAIL THE IMAGE if any gold, metallic yellow, cream, or non-palette accent "
+            f"appears — replace with {', '.join(accents)}."
+        )
     return (
         "CRITICAL BACKGROUND: output a PNG with a TRUE transparent alpha channel. "
         "If the model cannot emit alpha, fill ONLY the empty backdrop with a flat solid "
@@ -194,7 +204,7 @@ def _print_art_rules(
         "gradients, no checkerboard, no paper texture, no white matte. "
         "Print-ready flat graphic only: no product silhouette, no fabric/ceramic photo, no "
         "mockup frame, no hanger, no 3D product shot. Sharp high-contrast vector-like artwork "
-        f"suitable for DTG/DTF/sublimation. {contrast} "
+        f"suitable for DTG/DTF/sublimation. {contrast}{color_fail} "
         "Centered composition, no watermark, no extra people or scenery."
     )
 
@@ -203,7 +213,10 @@ def _user_brief_block(design_prompt: str | None) -> str:
     brief = (design_prompt or "").strip()
     if not brief:
         return ""
-    return f" USER DESIGN BRIEF (follow closely): {brief}."
+    return (
+        f" USER DESIGN BRIEF (follow for motif/layout/style ONLY — never override the "
+        f"HARD COLOR LOCK / brand hex palette): {brief}."
+    )
 
 
 def _redo_block(redo_instructions: str | None) -> str:
@@ -250,9 +263,9 @@ def back_print_prompt(
     accents = chromatic_hexes(brand.color_hexes) if brand else []
     if accents:
         color_bit = (
-            f" Prefer lettering colors from the brand palette "
-            f"({', '.join(accents)}) while staying high-contrast on {blank_color}. "
-            f"Do not use gold/metallic yellow unless those hexes are in the palette."
+            f" Lettering colors MUST be chosen only from [{', '.join(accents)}] while "
+            f"staying high-contrast on {blank_color}. HARD BAN on gold/metallic yellow/"
+            f"cream/off-palette lettering."
         )
     elif brand and brand.color_hexes:
         color_bit = (
@@ -361,8 +374,19 @@ def style_mockup_prompt(
     *,
     design_prompt: str | None = None,
     redo_instructions: str | None = None,
+    brand: BrandProfile | None = None,
 ) -> str:
-    extra = f"{_user_brief_block(design_prompt)}{_redo_block(redo_instructions)}"
+    accents = chromatic_hexes(brand.color_hexes) if brand else []
+    color_lock = ""
+    if accents:
+        color_lock = (
+            f" Printed artwork colors on the product MUST stay locked to these hexes only: "
+            f"{', '.join(accents)}. Do not recolor the print to gold, cream, or other "
+            f"off-palette accents in the mockup."
+        )
+    extra = (
+        f"{_user_brief_block(design_prompt)}{_redo_block(redo_instructions)}{color_lock}"
+    )
     if product_type == "hat":
         return (
             f'Create a photorealistic baseball cap product mockup for "{company_name}". '
@@ -630,6 +654,7 @@ async def _generate_print_and_mockup(
         blank_color,
         design_prompt=design_prompt,
         redo_instructions=redo_instructions,
+        brand=brand,
     )
     jersey_bytes = await generate_image(
         mockup_prompt,

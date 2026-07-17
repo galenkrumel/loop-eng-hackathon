@@ -568,9 +568,9 @@ def brand_prompt_guidance(
     if not brand or not brand.has_visual_cues:
         return (
             "Infer a cohesive brand crest or wordmark (colors, typography, motifs) "
-            "from the company name. Use that company's real public brand colors — "
-            "do NOT invent gold, metallic foil, or cream accents unless they are "
-            "part of the real brand."
+            "from the company name. Use that company's real public brand colors ONLY — "
+            "HARD BAN: gold, brass, metallic yellow, cream, orange, purple, or any hex "
+            "not belonging to the real brand."
         )
 
     parts: list[str] = []
@@ -582,13 +582,22 @@ def brand_prompt_guidance(
 
     accents = chromatic_hexes(brand.color_hexes)
     if accents:
+        listed = ", ".join(accents)
         parts.append(
-            f"MANDATORY print ink palette (use these hexes as the dominant colors): "
-            f"{', '.join(accents)}. Do not substitute gold, brass, metallic yellow, "
-            f"cream, or other invented accents."
+            f"HARD COLOR LOCK — every colored ink, fill, stroke, highlight, and glow MUST "
+            f"be one of these exact hexes only: {listed}. These are the ONLY allowed "
+            f"chromatic colors in the entire artwork. Approximate / similar hues are NOT "
+            f"allowed. HARD BAN: gold, brass, metallic yellow, cream, beige, orange, "
+            f"purple, pink, cyan, or any other invented accent. Neutral black / white / "
+            f"very dark navy may be used only for outlines or negative space if needed "
+            f"for contrast — never as a substitute brand color."
         )
     elif brand.color_hexes:
-        parts.append(f"Known brand colors: {', '.join(brand.color_hexes)}.")
+        listed = ", ".join(brand.color_hexes)
+        parts.append(
+            f"HARD COLOR LOCK — use only these brand palette hexes: {listed}. "
+            f"Do not invent gold, brass, metallic yellow, cream, or other accents."
+        )
 
     if brand.slogan:
         parts.append(f'Brand line: "{brand.slogan}".')
@@ -596,9 +605,9 @@ def brand_prompt_guidance(
         parts.append(
             "The first reference image is the real company logo — preserve its exact "
             "shape and lettering. If the reference is monochrome/dark, RECOLOR it using "
-            "the mandatory brand ink palette above (do not keep it black-on-black and "
-            "do not invent gold). Adapt into athletic jersey print artwork; do not invent "
-            "a different logo mark."
+            "ONLY the locked brand hexes above (do not keep it black-on-black and do not "
+            "invent gold). Adapt into athletic jersey print artwork; do not invent a "
+            "different logo mark."
         )
     else:
         parts.append(

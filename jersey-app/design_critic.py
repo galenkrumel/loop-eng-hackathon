@@ -66,7 +66,10 @@ def _brand_summary(brand: BrandProfile | None, *, has_logo_ref: bool) -> str:
     if brand.color_hexes:
         accents = chromatic_hexes(brand.color_hexes)
         if accents:
-            bits.append(f"Chromatic brand colors (required): {', '.join(accents)}")
+            bits.append(
+                f"HARD COLOR LOCK — chromatic brand hexes (required, exact): "
+                f"{', '.join(accents)}. Flag gold/brass/cream/off-palette inks as issues."
+            )
         bits.append(f"Known colors: {', '.join(brand.color_hexes)}")
     bits.append(f"Logo reference available to generator: {'yes' if has_logo_ref else 'no'}")
     bits.append(brand_prompt_guidance(brand, has_logo_ref=has_logo_ref))
